@@ -1,8 +1,8 @@
 
-## ⚠️ Project Status: No Longer Maintained
+## ⚠️ Project Status: Trying 
 
-This project is no longer actively maintained.
-Feel free to fork it or use it as-is, but note that no further updates, bug fixes, or support will be done.
+This project is my attempt to learn how to code with the help of Ai's.
+mainly for hobby, don't hope anything!
 
 # NovelDokusha
 Android web novel reader. Reader focused on simplicity, improving reading immersion.
