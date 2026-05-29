@@ -1,11 +1,11 @@
-name: Build Debug APK
+name: Build Signed APK
 
 on:
   workflow_dispatch:
 
 jobs:
   buildRelease:
-    name: Build Debug APK
+    name: Build Signed APK
     runs-on: ubuntu-latest
     steps:
       - name: Clone repo
@@ -28,12 +28,12 @@ jobs:
       - name: Grant execute permission
         run: chmod +x gradlew
 
-      - name: Build Release APK
-        run: ./gradlew assembleFullRelease -PsigningPropertiesPath=signing.properties
+      - name: Build Full Release APK
+        run: ./gradlew assembleFullRelease -PlocalPropertiesFilePath=signing.properties
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NovlReadr-debug
-         path: app/build/outputs/apk/full/release/*.apk
-         retention-days: 7
+          name: NovlReadr-full-release
+          path: app/build/outputs/apk/full/release/*.apk
+          retention-days: 7
