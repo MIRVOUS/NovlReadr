@@ -90,8 +90,8 @@ class NovelHall(
                 if (page == 1) addPath("all.html")
                 else addPath("all-$page.html")
             }
-            val doc.select("li.btm");
-    .mapNotNull {
+            val doc.select("li.btm")
+                .mapNotNull {
         val link = it.selectFirst("a[href]")
             ?: return@mapNotNull null
 
@@ -107,7 +107,7 @@ class NovelHall(
                     }
                     ?: ""
         )
-    }
+                }
                 .let {
                     PagedList(
                         list = it,
