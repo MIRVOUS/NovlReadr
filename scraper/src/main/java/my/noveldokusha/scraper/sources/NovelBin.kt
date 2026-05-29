@@ -6,10 +6,7 @@ import my.noveldokusha.core.LanguageCode
 import my.noveldokusha.core.PagedList
 import my.noveldokusha.core.Response
 import my.noveldokusha.network.NetworkClient
-import my.noveldokusha.network.add
-import my.noveldokusha.network.ifCase
 import my.noveldokusha.network.toDocument
-import my.noveldokusha.network.toUrlBuilderSafe
 import my.noveldokusha.network.tryConnect
 import my.noveldokusha.scraper.R
 import my.noveldokusha.scraper.SourceInterface
@@ -18,6 +15,7 @@ import my.noveldokusha.scraper.domain.BookResult
 import my.noveldokusha.scraper.domain.ChapterResult
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 
 class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catalog {
     override val id = "Novelbin"
@@ -36,45 +34,41 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     private fun bestFromSrcset(srcset: String?): String? =
         srcset
             ?.split(",")
-            ?.mapNotNull { part -> part.trim().split(" ").firstOrNull()?.takeIf { it.isNotBlank() } }
+            ?.mapNotNull { part ->
+                part.trim().split(" ").firstOrNull()?.takeIf { it.isNotBlank() }
+            }
             ?.lastOrNull()
 
     private fun bestImageUrl(img: Element?): String =
-        pickFirstNotBlank(
-            bestFromSrcset(img?.attr("data-srcset")),
-            bestFromSrcset(img?.attr("srcset")),
-            img?.attr("data-src"),
-            img?.attr("data-original"),
-            img?.attr("src"),
+        resolveUrl(
+            pickFirstNotBlank(
+                bestFromSrcset(img?.attr("data-srcset")),
+                bestFromSrcset(img?.attr("srcset")),
+                img?.attr("data-src"),
+                img?.attr("data-original"),
+                img?.attr("src"),
+            )
         )
 
-    private fun isRealChapterLink(href: String, title: String): Boolean {
-        val normalizedTitle = title.trim()
-        return (href.contains("/chapter-", ignoreCase = true) || href.contains("/chapter/", ignoreCase = true)) &&
-            !normalizedTitle.equals("READ NOW", ignoreCase = true) &&
-            normalizedTitle.isNotBlank()
-    }
-
-    private suspend fun getPagesList(index: Int, url: String) =
+    private suspend fun getPagesList(index: Int, url: String): Response<PagedList<BookResult>> =
         withContext(Dispatchers.Default) {
             tryConnect {
                 val doc = networkClient.get(url).toDocument()
 
                 val bookResults =
-                    doc.select("#list-page div.list-novel .row")
+                    doc.select("#list-page .list-novel .row, .list-novel .row")
                         .mapNotNull { row ->
-                            val link = row.selectFirst("div.col-xs-7 a, a[href]") ?: return@mapNotNull null
+                            val link = row.selectFirst("div.col-xs-7 a[href], a[href]") ?: return@mapNotNull null
                             val img = row.selectFirst("div.col-xs-3 img, img")
 
                             val title = pickFirstNotBlank(link.attr("title"), link.text()).trim()
                             val href = link.attr("href").trim()
-
                             if (title.isBlank() || href.isBlank()) return@mapNotNull null
 
                             BookResult(
                                 title = title,
                                 url = resolveUrl(href),
-                                coverImageUrl = bestImageUrl(img),
+                                coverImageUrl = img?.let { bestImageUrl(it) }.orEmpty(),
                             )
                         }
 
@@ -91,8 +85,8 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     override suspend fun getChapterTitle(doc: Document): String =
         withContext(Dispatchers.Default) {
             pickFirstNotBlank(
-                doc.selectFirst("h1.entry-title")?.text(),
                 doc.selectFirst("h2 > .title-chapter")?.text(),
+                doc.selectFirst("h1.entry-title")?.text(),
                 doc.title(),
             )
         }
@@ -106,6 +100,7 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
                     "#chapter-content",
                     "#chr-content",
                     ".entry-content",
+                    ".text-left",
                     "article",
                 ).mapNotNull { selector -> doc.selectFirst(selector) }
                     .firstOrNull()
@@ -127,7 +122,7 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
                 pickFirstNotBlank(
                     doc.selectFirst("meta[property=og:image]")?.attr("content"),
                     doc.selectFirst("meta[itemprop=image]")?.attr("content"),
-                    bestImageUrl(img),
+                    img?.let { bestImageUrl(it) },
                 )
             }
         }
@@ -135,7 +130,9 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     override suspend fun getBookDescription(bookUrl: String): Response<String?> =
         withContext(Dispatchers.Default) {
             tryConnect {
-                networkClient.get(bookUrl).toDocument().selectFirst("div.desc-text")?.text()
+                networkClient.get(bookUrl).toDocument()
+                    .selectFirst("div.desc-text, .desc-text, .summary__content")
+                    ?.let { TextExtractor.get(it) }
             }
         }
 
@@ -145,13 +142,17 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
                 val doc = networkClient.get(bookUrl).toDocument()
 
                 doc.select(
-                    "a[href*='/chapter-'], a[href*='/chapter/']"
+                    ".chapter-list a[href], .list-chapter a[href], ul.list-chapter li a[href], #chapter-list a[href], a[href*='/chapter-']"
                 )
                     .mapNotNull { a ->
                         val href = a.attr("href").trim()
                         val title = pickFirstNotBlank(a.attr("title"), a.text()).trim()
 
-                        if (!isRealChapterLink(href, title)) return@mapNotNull null
+                        if (href.isBlank() || title.isBlank()) return@mapNotNull null
+                        if (title.equals("READ NOW", ignoreCase = true)) return@mapNotNull null
+                        if (!href.contains("/chapter-", ignoreCase = true) && !href.contains("/chapter/", ignoreCase = true)) {
+                            return@mapNotNull null
+                        }
 
                         ChapterResult(
                             title = title,
@@ -159,7 +160,6 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
                         )
                     }
                     .distinctBy { it.url }
-                    .reversed()
             }
         }
 
@@ -167,10 +167,11 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
         withContext(Dispatchers.Default) {
             val page = index + 1
             val url =
-                catalogUrl
-                    .toUrlBuilderSafe()
-                    .ifCase(page > 1) { add("page", page.toString()) }
-                    .toString()
+                if (page > 1) {
+                    "${catalogUrl}page/$page/"
+                } else {
+                    catalogUrl
+                }
 
             getPagesList(index, url)
         }
@@ -181,14 +182,15 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     ): Response<PagedList<BookResult>> =
         withContext(Dispatchers.Default) {
             val page = index + 1
+            val encodedInput = URLEncoder.encode(input, Charsets.UTF_8.name())
             val url =
-                baseUrl
-                    .toUrlBuilderSafe()
-                    .addPath("search")
-                    .add("keyword" to input)
-                    .ifCase(page > 1) { add("page", page.toString()) }
-                    .toString()
+                if (page > 1) {
+                    "${baseUrl}search?page=$page&keyword=$encodedInput"
+                } else {
+                    "${baseUrl}search?keyword=$encodedInput"
+                }
 
             getPagesList(index, url)
         }
 }
+
