@@ -28,6 +28,16 @@ class BacaLightnovel(private val networkClient: NetworkClient) : SourceInterface
         "https://bacalightnovel.co/wp-content/uploads/2022/09/cropped-fav-32x32.png"
     override val language = LanguageCode.INDONESIAN
 
+    // Helper: ambil src atau data-src (untuk lazy-loaded images)
+    private fun imageUrl(element: org.jsoup.nodes.Element?): String {
+        if (element == null) return ""
+        return element.attr("src").ifBlank {
+            element.attr("data-src").ifBlank {
+                element.attr("data-lazy-src")
+            }
+        }
+    }
+
     private suspend fun getPagesList(
         index: Int,
         url: String,
@@ -38,36 +48,54 @@ class BacaLightnovel(private val networkClient: NetworkClient) : SourceInterface
                 val doc = networkClient.get(url).toDocument()
                 doc.select(".listupd > .maindet .mdthumb a")
                     .mapNotNull {
+                        val img = it.selectFirst("img")
                         BookResult(
-                            title = it.selectFirst("img")?.attr("title") ?: "",
-                            url = it.attr("href") ?: "",
-                            coverImageUrl = it.selectFirst("img")?.attr("src") ?: "",
+                            title = img?.attr("title")?.ifBlank {
+                                img.attr("alt")
+                            } ?: "",
+                            url = it.attr("href"),
+                            coverImageUrl = imageUrl(img),
                         )
                     }
                     .let {
                         PagedList(
                             list = it,
                             index = index,
-                            isLastPage = if (isSearch) doc.selectFirst(".bixbox .pagination .next") == null else doc.selectFirst(".bixbox .hpage .r") == null,
+                            isLastPage = if (isSearch)
+                                doc.selectFirst(".bixbox .pagination .next") == null
+                            else
+                                doc.selectFirst(".bixbox .hpage .r") == null,
                         )
                     }
             }
         }
 
     override suspend fun getChapterTitle(doc: Document): String =
-        withContext(Dispatchers.Default) { doc.selectFirst("h1[class=entry-title]")?.text() ?: "" }
+        withContext(Dispatchers.Default) {
+            doc.selectFirst("h1.entry-title")?.text()
+                ?: doc.selectFirst("h1[class=entry-title]")?.text()
+                ?: doc.selectFirst(".entry-title")?.text()
+                ?: ""
+        }
 
     override suspend fun getChapterText(doc: Document): String =
         withContext(Dispatchers.Default) {
-            doc.selectFirst("div .epcontent[itemprop=text] .text-left")!!.let {
-                TextExtractor.get(it)
-            }
+            // Coba beberapa selector, dari yang paling spesifik ke umum
+            val content =
+                doc.selectFirst("div.epcontent[itemprop=text] .text-left")
+                    ?: doc.selectFirst("div.epcontent[itemprop=text]")
+                    ?: doc.selectFirst(".epcontent[itemprop=text]")
+                    ?: doc.selectFirst(".epcontent")
+                    ?: doc.selectFirst("div[itemprop=articleBody]")
+            content?.let { TextExtractor.get(it) } ?: ""
         }
 
     override suspend fun getBookCoverImageUrl(bookUrl: String): Response<String?> =
         withContext(Dispatchers.Default) {
             tryConnect {
-                networkClient.get(bookUrl).toDocument().selectFirst(".sertothumb img")?.attr("src")
+                val img = networkClient.get(bookUrl).toDocument()
+                    .selectFirst(".sertothumb img")
+                imageUrl(img).ifBlank { null }
             }
         }
 
@@ -91,8 +119,8 @@ class BacaLightnovel(private val networkClient: NetworkClient) : SourceInterface
                     .select(".eplister li")
                     .map {
                         ChapterResult(
-                            it.selectFirst(".epl-title")?.text() ?: "",
-                            it.selectFirst("a")?.attr("href") ?: ""
+                            title = it.selectFirst(".epl-title")?.text() ?: "",
+                            url = it.selectFirst("a")?.attr("href") ?: ""
                         )
                     }
                     .reversed()
