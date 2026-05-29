@@ -23,7 +23,7 @@ class IndoWebnovel(private val networkClient: NetworkClient) : SourceInterface.C
     override val id = "indo_webnovel"
     override val nameStrId = R.string.source_name_indo_webnovel
     override val baseUrl = "https://indowebnovel.id/"
-    override val catalogUrl = "https://indowebnovel.id/advanced-search/"
+    override val catalogUrl = "https://indowebnovel.id/series/"
     override val iconUrl =
         "https://indowebnovel.id/wp-content/uploads/2022/12/cropped-Phoenix-PNG-32x32.png"
     override val language = LanguageCode.INDONESIAN
