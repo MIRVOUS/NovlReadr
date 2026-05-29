@@ -17,15 +17,23 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup APK signing
+        run: |
+          echo -n ${{ secrets.SIGNING_KEY }} | base64 -d > app/novlreadr.jks
+          echo storeFile=novlreadr.jks > signing.properties
+          echo storePassword=${{ secrets.KEY_STORE_PASSWORD }} >> signing.properties
+          echo keyAlias=${{ secrets.ALIAS }} >> signing.properties
+          echo keyPassword=${{ secrets.KEY_PASSWORD }} >> signing.properties
+
       - name: Grant execute permission
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleFullDebug
+      - name: Build Release APK
+        run: ./gradlew assembleFullRelease -PsigningPropertiesPath=signing.properties
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: NovlReadr-debug
-          path: app/build/outputs/apk/**/**.apk
-          retention-days: 7
+         path: app/build/outputs/apk/full/release/*.apk
+         retention-days: 7
