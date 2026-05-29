@@ -36,15 +36,24 @@ class NovelHall(
     }
 
     override suspend fun getBookCoverImageUrl(
-        bookUrl: String
-    ): Response<String?> = withContext(Dispatchers.Default) {
-        tryConnect {
-            networkClient.get(bookUrl).toDocument()
-                .selectFirst(".book-img.hidden-xs")
-                ?.selectFirst("img[src]")
-                ?.attr("src")
-        }
+    bookUrl: String
+): Response<String?> = withContext(Dispatchers.Default) {
+    tryConnect {
+        val img = networkClient
+            .get(bookUrl)
+            .toDocument()
+            .selectFirst(
+                ".book-img img, .book-info img, .bookcover img, .cover img"
+            )
+
+        img?.attr("src")
+            ?.takeIf { it.isNotBlank() }
+            ?: img?.attr("data-src")
+                ?.takeIf { it.isNotBlank() }
+            ?: img?.attr("data-original")
+                ?.takeIf { it.isNotBlank() }
     }
+}
 
     override suspend fun getBookDescription(
         bookUrl: String
@@ -81,15 +90,24 @@ class NovelHall(
                 if (page == 1) addPath("all.html")
                 else addPath("all-$page.html")
             }
-            val doc = networkClient.get(url).toDocument()
-            doc.select("li.btm")
-                .mapNotNull {
-                    val link = it.selectFirst("a[href]") ?: return@mapNotNull null
-                    BookResult(
-                        title = link.text(),
-                        url = baseUrl + link.attr("href").removePrefix("/"),
-                    )
-                }
+            val doc.select("li.btm")
+    .mapNotNull {
+        val link = it.selectFirst("a[href]")
+            ?: return@mapNotNull null
+
+        BookResult(
+            title = link.text(),
+            url = baseUrl + link.attr("href").removePrefix("/"),
+            coverImageUrl =
+                it.selectFirst("img")
+                    ?.attr("src")
+                    ?.ifBlank {
+                        it.selectFirst("img")
+                            ?.attr("data-src")
+                    }
+                    ?: ""
+        )
+    }
                 .let {
                     PagedList(
                         list = it,
@@ -119,10 +137,20 @@ class NovelHall(
                 ?.select("tr > td:nth-child(2) > a[href]")
                 .let { it ?: listOf() }
                 .map { link ->
-                    BookResult(
-                        title = link.text(),
-                        url = baseUrl + link.attr("href").removePrefix("/"),
-                    )
+    val parent = link.parent()?.parent()
+
+    BookResult(
+        title = link.text(),
+        url = baseUrl + link.attr("href").removePrefix("/"),
+        coverImageUrl =
+            parent?.selectFirst("img")
+                ?.attr("src")
+                ?.ifBlank {
+                    parent.selectFirst("img")
+                        ?.attr("data-src")
+                }
+                ?: ""
+    )
                 }
                 .let {
                     PagedList(
