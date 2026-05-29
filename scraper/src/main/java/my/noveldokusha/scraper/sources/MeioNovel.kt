@@ -19,14 +19,21 @@ import my.noveldokusha.scraper.TextExtractor
 import my.noveldokusha.scraper.domain.BookResult
 import my.noveldokusha.scraper.domain.ChapterResult
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
+
+private fun pickFirstNotBlank(vararg values: String?): String =
+    values.firstOrNull { !it.isNullOrBlank() }.orEmpty()
+
+private fun Element?.attrOrEmpty(vararg names: String): String =
+    names.mapNotNull { name -> this?.attr(name)?.takeIf { it.isNotBlank() } }.firstOrNull().orEmpty()
 
 class MeioNovel(private val networkClient: NetworkClient) : SourceInterface.Catalog {
     override val id = "meio_webnovel"
     override val nameStrId = R.string.source_name_meio_novel
-    override val baseUrl = "https://meionovel.id/"
-    override val catalogUrl = "https://meionovel.id/novel/?m_orderby=views"
+    override val baseUrl = "https://meionovels.com/"
+    override val catalogUrl = "https://meionovels.com/novel/?m_orderby=views"
     override val iconUrl =
-        "https://meionovel.id/wp-content/uploads/2021/01/cropped-logoa-sa-32x32.png"
+        "https://meionovels.com/wp-content/uploads/2021/01/cropped-logoa-sa-32x32.png"
     override val language = LanguageCode.INDONESIAN
 
     private suspend fun getPagesList(
@@ -37,56 +44,90 @@ class MeioNovel(private val networkClient: NetworkClient) : SourceInterface.Cata
         withContext(Dispatchers.Default) {
             tryConnect {
                 val doc = networkClient.get(url).toDocument()
-                doc.select(
-                        if (isSearch) "tab-content-wrap .c-tabs-item .tab-thumb a"
-                        else ".tab-content-wrap .page-item-detail .item-thumb a"
-                    )
-                    .mapNotNull {
+
+                val selector = if (isSearch) {
+                    ".tab-content-wrap .c-tabs-item .tab-thumb a, .c-tabs-item .tab-thumb a, .page-item-detail .item-thumb a"
+                } else {
+                    ".tab-content-wrap .page-item-detail .item-thumb a, .page-item-detail .item-thumb a, .c-tabs-item .tab-thumb a"
+                }
+
+                val list = doc.select(selector)
+                    .mapNotNull { a ->
+                        val href = a.attr("href").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        val img = a.selectFirst("img")
+
                         BookResult(
-                            title = it.attr("title"),
-                            url = it.attr("href"),
-                            coverImageUrl = it.selectFirst("img")?.attr("data-src") ?: "",
+                            title = pickFirstNotBlank(
+                                a.attr("title"),
+                                img.attrOrEmpty("title"),
+                                img.attrOrEmpty("alt"),
+                                a.text(),
+                            ),
+                            url = href,
+                            coverImageUrl = pickFirstNotBlank(
+                                img.attrOrEmpty("data-src"),
+                                img.attrOrEmpty("src"),
+                                img.attrOrEmpty("data-lazy-src"),
+                            ),
                         )
                     }
-                    .let {
-                        PagedList(
-                            list = it,
-                            index = index,
-                            isLastPage =
-                                doc.selectFirst(".paging-navigation .nav-previous") == null,
-                        )
-                    }
+
+                PagedList(
+                    list = list,
+                    index = index,
+                    isLastPage = doc.selectFirst(".paging-navigation .nav-previous") == null,
+                )
             }
         }
 
     override suspend fun getChapterTitle(doc: Document): String =
-        withContext(Dispatchers.Default) { doc.selectFirst(".reading-content h1")?.text() ?: "" }
+        withContext(Dispatchers.Default) {
+            pickFirstNotBlank(
+                doc.selectFirst("h1.entry-title")?.text(),
+                doc.selectFirst(".reading-content h1")?.text(),
+                doc.title(),
+            )
+        }
 
     override suspend fun getChapterText(doc: Document): String =
         withContext(Dispatchers.Default) {
-            doc.selectFirst(".reading-content")!!.let {
-                it.selectFirst("h1")?.remove()
-                TextExtractor.get(it)
-            }
+            val content =
+                doc.selectFirst(".reading-content .text-left")
+                    ?: doc.selectFirst(".reading-content .entry-content")
+                    ?: doc.selectFirst(".reading-content")
+                    ?: return@withContext ""
+
+            content.select(
+                "h1, .wp-manga-nav, .nav-links, .comments-area, .chapter-nav, .breadcrumb"
+            ).remove()
+
+            TextExtractor.get(content)
         }
 
     override suspend fun getBookCoverImageUrl(bookUrl: String): Response<String?> =
         withContext(Dispatchers.Default) {
             tryConnect {
-                networkClient
+                val img = networkClient
                     .get(bookUrl)
                     .toDocument()
-                    .selectFirst(".tab-summary > .summary_image img ")
-                    ?.attr("data-src")
+                    .selectFirst(".tab-summary .summary_image img, .summary_image img")
+
+                pickFirstNotBlank(
+                    img.attrOrEmpty("data-src"),
+                    img.attrOrEmpty("src"),
+                    img.attrOrEmpty("data-lazy-src"),
+                )
             }
         }
 
     override suspend fun getBookDescription(bookUrl: String): Response<String?> =
         withContext(Dispatchers.Default) {
             tryConnect {
-                networkClient.get(bookUrl).toDocument().selectFirst(".summary__content")?.let {
-                    TextExtractor.get(it)
-                }
+                networkClient
+                    .get(bookUrl)
+                    .toDocument()
+                    .selectFirst(".summary__content")
+                    ?.let { TextExtractor.get(it) }
             }
         }
 
@@ -94,14 +135,18 @@ class MeioNovel(private val networkClient: NetworkClient) : SourceInterface.Cata
         withContext(Dispatchers.Default) {
             val postData =
                 postRequest(url = bookUrl.toUrlBuilderSafe().addPath("ajax", "chapters").toString())
+
             tryConnect {
                 networkClient
                     .call(postData)
                     .toDocument()
-                    .select("li[class=wp-manga-chapter]")
-                    .map {
-                        it.selectFirst("span")?.remove()
-                        ChapterResult(it.text() ?: "", it.selectFirst("a")?.attr("href") ?: "")
+                    .select("li.wp-manga-chapter, li[class=wp-manga-chapter]")
+                    .map { item ->
+                        item.selectFirst("span")?.remove()
+                        ChapterResult(
+                            item.text().trim(),
+                            item.selectFirst("a")?.attr("href") ?: "",
+                        )
                     }
                     .reversed()
             }
@@ -115,6 +160,7 @@ class MeioNovel(private val networkClient: NetworkClient) : SourceInterface.Cata
                     .toUrlBuilderSafe()
                     .ifCase(page > 1) { addPath("page", page.toString()) }
                     .toString()
+
             getPagesList(index, url)
         }
 
@@ -128,8 +174,13 @@ class MeioNovel(private val networkClient: NetworkClient) : SourceInterface.Cata
                 baseUrl
                     .toUrlBuilderSafe()
                     .ifCase(page > 1) { addPath("page", page.toString()) }
-                    .add("s" to input, "post_type" to "wp-manga", "m_orderby" to "views")
+                    .add(
+                        "s" to input,
+                        "post_type" to "wp-manga",
+                        "m_orderby" to "views",
+                    )
                     .toString()
+
             getPagesList(index, url, true)
         }
 }
