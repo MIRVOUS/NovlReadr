@@ -50,6 +50,46 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
             )
         )
 
+    private fun buildPageUrl(baseUrl: String, page: Int): String =
+        if (page <= 1) {
+            baseUrl
+        } else if (baseUrl.contains('?')) {
+            "$baseUrl&page=$page"
+        } else {
+            "$baseUrl?page=$page"
+        }
+
+    private fun chapterPageCandidates(bookUrl: String, page: Int): List<String> {
+        if (page <= 1) return listOf(bookUrl)
+
+        val trimmed = bookUrl.trimEnd('/')
+        return listOf(
+            buildPageUrl(bookUrl, page),
+            "$trimmed/page/$page/",
+        ).distinct()
+    }
+
+    private fun parseChapterList(doc: Document): List<ChapterResult> =
+        doc.select(
+            ".chapter-list a[href], .list-chapter a[href], ul.list-chapter li a[href], #chapter-list a[href], a[href*='/chapter-']"
+        )
+            .mapNotNull { a ->
+                val href = a.attr("href").trim()
+                val title = pickFirstNotBlank(a.attr("title"), a.text()).trim()
+
+                if (href.isBlank() || title.isBlank()) return@mapNotNull null
+                if (title.equals("READ NOW", ignoreCase = true)) return@mapNotNull null
+                if (!href.contains("/chapter-", ignoreCase = true) && !href.contains("/chapter/", ignoreCase = true)) {
+                    return@mapNotNull null
+                }
+
+                ChapterResult(
+                    title = title,
+                    url = resolveUrl(href),
+                )
+            }
+            .distinctBy { it.url }
+
     private suspend fun getPagesList(index: Int, url: String): Response<PagedList<BookResult>> =
         withContext(Dispatchers.Default) {
             tryConnect {
@@ -139,39 +179,40 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     override suspend fun getChapterList(bookUrl: String) =
         withContext(Dispatchers.Default) {
             tryConnect {
-                val doc = networkClient.get(bookUrl).toDocument()
+                val chapters = mutableListOf<ChapterResult>()
+                val seenUrls = linkedSetOf<String>()
 
-                doc.select(
-                    ".chapter-list a[href], .list-chapter a[href], ul.list-chapter li a[href], #chapter-list a[href], a[href*='/chapter-']"
-                )
-                    .mapNotNull { a ->
-                        val href = a.attr("href").trim()
-                        val title = pickFirstNotBlank(a.attr("title"), a.text()).trim()
+                var page = 1
+                while (page <= 1000) {
+                    var pageAddedAny = false
 
-                        if (href.isBlank() || title.isBlank()) return@mapNotNull null
-                        if (title.equals("READ NOW", ignoreCase = true)) return@mapNotNull null
-                        if (!href.contains("/chapter-", ignoreCase = true) && !href.contains("/chapter/", ignoreCase = true)) {
-                            return@mapNotNull null
+                    for (candidateUrl in chapterPageCandidates(bookUrl, page)) {
+                        val doc = runCatching {
+                            networkClient.get(candidateUrl).toDocument()
+                        }.getOrNull() ?: continue
+
+                        val pageChapters = parseChapterList(doc)
+                        val newChapters = pageChapters.filter { it.url !in seenUrls }
+                        if (newChapters.isNotEmpty()) {
+                            chapters += newChapters
+                            seenUrls.addAll(newChapters.map { it.url })
+                            pageAddedAny = true
+                            break
                         }
-
-                        ChapterResult(
-                            title = title,
-                            url = resolveUrl(href),
-                        )
                     }
-                    .distinctBy { it.url }
+
+                    if (!pageAddedAny) break
+                    page++
+                }
+
+                chapters
             }
         }
 
     override suspend fun getCatalogList(index: Int): Response<PagedList<BookResult>> =
         withContext(Dispatchers.Default) {
             val page = index + 1
-            val url =
-                if (page > 1) {
-                    "${catalogUrl}page/$page/"
-                } else {
-                    catalogUrl
-                }
+            val url = buildPageUrl(catalogUrl, page)
 
             getPagesList(index, url)
         }
@@ -183,12 +224,8 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
         withContext(Dispatchers.Default) {
             val page = index + 1
             val encodedInput = URLEncoder.encode(input, Charsets.UTF_8.name())
-            val url =
-                if (page > 1) {
-                    "${baseUrl}search?page=$page&keyword=$encodedInput"
-                } else {
-                    "${baseUrl}search?keyword=$encodedInput"
-                }
+            val baseSearchUrl = "${baseUrl}search?keyword=$encodedInput"
+            val url = buildPageUrl(baseSearchUrl, page)
 
             getPagesList(index, url)
         }
