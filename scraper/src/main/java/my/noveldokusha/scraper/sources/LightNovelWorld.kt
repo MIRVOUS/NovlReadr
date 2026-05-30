@@ -238,24 +238,6 @@ class LightNovelWorld(
     return results
 }
 
-    // Fallback: cari semua link /novel/ jika selector utama kosong
-    if (results.isEmpty()) {
-        for (anchor in doc.select("a[href*='/novel/']")) {
-            val href = anchor.attr("href").trim()
-            if (href.contains("/chapter/") || href.endsWith("/chapters/")) continue
-            val url = resolveUrl(baseUrl, href)
-            if (!seen.add(url)) continue
-            val title = anchor.attr("title").ifBlank { anchor.text() }.trim()
-            if (title.isBlank()) continue
-            val img = anchor.selectFirst("img") ?: anchor.parent()?.selectFirst("img")
-            val cover = img?.attr("data-src")?.ifBlank { img.attr("src") } ?: ""
-            results.add(BookResult(title = title, url = url, coverImageUrl = resolveUrl(baseUrl, cover)))
-        }
-    }
-
-    return results
-    }
-
     private fun getBooksList(doc: Document, index: Int): PagedList<BookResult> {
         val books = parseBooksFromDocument(doc)
         return PagedList(
