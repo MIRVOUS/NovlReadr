@@ -18,15 +18,6 @@ import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * Light Novel World live examples (current site):
- * - Home: https://lightnovelworld.org/
- * - Catalog: https://lightnovelworld.org/genre-all/?order=new&page=2
- * - Novel: https://lightnovelworld.org/novel/shadow-slave/
- *
- * The site changed from the older .com layout and query structure, so this
- * scraper uses the live .org URLs and several fallback selectors/endpoints.
- */
 class LightNovelWorld(
     private val networkClient: NetworkClient
 ) : SourceInterface.Catalog {
