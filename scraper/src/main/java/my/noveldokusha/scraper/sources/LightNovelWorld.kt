@@ -197,7 +197,7 @@ class LightNovelWorld(
         return normalizedUrl.contains(query)
     }
 
-    private fun fetchChapterListDocument(bookUrl: String, page: Int): Document? {
+    private suspend fun fetchChapterListDocument(bookUrl: String, page: Int): Document? {
         val base = bookUrl.trimEnd('/')
 
         val candidates = if (page == 1) {
