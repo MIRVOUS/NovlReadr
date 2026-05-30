@@ -40,34 +40,35 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     }
 
     private suspend fun getPagesList(index: Int, url: String) =
-        withContext(Dispatchers.Default) {
-            tryConnect {
-                networkClient.get(url).toDocument().run {
-                    val isLastPage = select("ul.pagination li.next.disabled").isEmpty()
-                    val bookResults =
-                    select("#list-page .col-novel-main .list-novel .row, #list-page .col-novel-main .list-novel .novel-item").mapNotNull {
-                        // Coba beberapa selector untuk link judul
-                            val link = it.selectFirst("div.col-xs-7 a")
-                                ?: it.selectFirst(".novel-title a")
-                                ?: it.selectFirst("h3 a")
-                                ?: return@mapNotNull null
+    withContext(Dispatchers.Default) {
+        tryConnect {
+            networkClient.get(url).toDocument().run {
+                val isLastPage = select("ul.pagination li.next.disabled").isEmpty()
+                val mainContainer = selectFirst("#list-page .col-novel-main")
+                    ?: selectFirst("#list-page")
+                val bookResults = mainContainer
+                    ?.select(".list-novel .row, .list-novel .novel-item")
+                    ?.mapNotNull {
+                        val link = it.selectFirst("div.col-xs-7 a")
+                            ?: it.selectFirst(".novel-title a")
+                            ?: it.selectFirst("h3 a")
+                            ?: return@mapNotNull null
 
-                            // Coba beberapa selector untuk cover image
-                            val coverImg = it.selectFirst("div.col-xs-3 > div > img")
-                                ?: it.selectFirst("div.col-xs-3 img")
-                                ?: it.selectFirst(".novel-cover img")
-                                ?: it.selectFirst("img")
+                        val coverImg = it.selectFirst("div.col-xs-3 > div > img")
+                            ?: it.selectFirst("div.col-xs-3 img")
+                            ?: it.selectFirst(".novel-cover img")
+                            ?: it.selectFirst("img")
 
-                            BookResult(
-                                title = link.attr("title").ifBlank { link.text() },
-                                url = link.attr("href"),
-                                coverImageUrl = imageUrl(coverImg)
-                            )
-                        }
-                    PagedList(list = bookResults, index = index, isLastPage = !isLastPage)
-                }
+                        BookResult(
+                            title = link.attr("title").ifBlank { link.text() },
+                            url = link.attr("href"),
+                            coverImageUrl = imageUrl(coverImg)
+                        )
+                    } ?: emptyList()
+                PagedList(list = bookResults, index = index, isLastPage = !isLastPage)
             }
         }
+    }
 
     override suspend fun getChapterTitle(doc: Document): String =
         withContext(Dispatchers.Default) {
