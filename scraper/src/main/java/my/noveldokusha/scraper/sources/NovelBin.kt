@@ -46,8 +46,8 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
                     val isLastPage = select("ul.pagination li.next.disabled").isEmpty()
                     val bookResults =
                     val mainContainer = selectFirst("#list-page .col-novel-main")
-    ?: selectFirst("#list-page")
-mainContainer?.select(".list-novel .row, .list-novel .novel-item")?.mapNotNull {
+                    ?: selectFirst("#list-page")
+                    mainContainer?.select(".list-novel .row, .list-novel .novel-item")?.mapNotNull {
                             // Coba beberapa selector untuk link judul
                             val link = it.selectFirst("div.col-xs-7 a")
                                 ?: it.selectFirst(".novel-title a")
