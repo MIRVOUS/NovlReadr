@@ -25,7 +25,7 @@ class LightNovelWorld(
     override val id = "light_novel_world"
     override val nameStrId = R.string.source_name_light_novel_world
     override val baseUrl = "https://lightnovelworld.org/"
-    override val catalogUrl = "https://lightnovelworld.org/advanced-search/"
+    override val catalogUrl = "https://lightnovelworld.org/advanced-search/?sort=updates&order=desc"
     override val iconUrl = "https://lightnovelworld.org/static/lightnovelworld/favicon.ico"
     override val language = LanguageCode.ENGLISH
 
