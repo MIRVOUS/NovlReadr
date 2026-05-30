@@ -25,15 +25,14 @@ class LightNovelWorld(
     override val id = "light_novel_world"
     override val nameStrId = R.string.source_name_light_novel_world
     override val baseUrl = "https://lightnovelworld.org/"
-    override val catalogUrl = "https://lightnovelworld.org/advanced-search/?sort=updates&order=desc"
-    override val iconUrl = "https://lightnovelworld.org/static/images/og-default.png"
+    override val catalogUrl = "https://lightnovelworld.org/advanced-search/"
+    override val iconUrl = "https://lightnovelworld.org/static/favicon.ico"
     override val language = LanguageCode.ENGLISH
 
-    // Header standar untuk menghindari Cloudflare block
     private val defaultHeaders = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Android 13; Mobile; rv:125.0) Gecko/125.0 Firefox/125.0")
-        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .add("Accept-Language", "en-US,en;q=0.5")
+        .add("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+        .add("Accept-Language", "en-US,en;q=0.9")
         .add("Referer", "https://lightnovelworld.org/")
         .build()
 
@@ -45,7 +44,7 @@ class LightNovelWorld(
 
     override suspend fun getChapterTitle(doc: Document): String =
         withContext(Dispatchers.Default) {
-            doc.selectFirst(".chapter-title, .capter-title, h1.chapter-title, h2.chapter-title")
+            doc.selectFirst(".chapter-title, h1.chapter-title, h2.chapter-title")
                 ?.text()
                 ?: doc.selectFirst("h1, h2")?.text()
                 ?: ""
@@ -58,6 +57,7 @@ class LightNovelWorld(
                 ?: doc.selectFirst(".chapter-content")
                 ?: doc.selectFirst("#content")
                 ?: doc.selectFirst("div[id^=chapter]")
+                ?: doc.selectFirst("article")
             content?.let { TextExtractor.get(it) } ?: ""
         }
 
@@ -66,10 +66,8 @@ class LightNovelWorld(
             tryConnect {
                 val doc = fetchDoc(bookUrl) ?: return@tryConnect null
                 doc.selectFirst("meta[property='og:image']")?.attr("content")
-                    ?: doc.selectFirst(".cover img")?.attr("data-src")
-                    ?: doc.selectFirst(".cover img")?.attr("src")
-                    ?: doc.selectFirst(".novel-cover img")?.attr("data-src")
-                    ?: doc.selectFirst(".novel-cover img")?.attr("src")
+                    ?: doc.selectFirst(".cover img, .novel-cover img, .book-cover img")
+                        ?.let { resolveUrl(baseUrl, it.attr("src").ifBlank { it.attr("data-src") }) }
             }
         }
 
@@ -77,10 +75,8 @@ class LightNovelWorld(
         withContext(Dispatchers.Default) {
             tryConnect {
                 val doc = fetchDoc(bookUrl) ?: return@tryConnect null
-                doc.selectFirst(".summary .content, .synopsis .content, .description .content")
+                doc.selectFirst(".summary .content, .synopsis .content, .description .content, .summary, .synopsis, .description")
                     ?.let { TextExtractor.get(it) }
-                    ?: doc.selectFirst(".summary, .synopsis, .description, #summary, #synopsis")
-                        ?.let { TextExtractor.get(it) }
             }
         }
 
@@ -88,24 +84,18 @@ class LightNovelWorld(
         withContext(Dispatchers.Default) {
             tryConnect {
                 val doc = fetchDoc(bookUrl)
-                    ?: throw Exception("Failed to load novel page: $bookUrl")
+                    ?: throw Exception("Failed to load: $bookUrl")
 
-                // Ekstrak slug dari URL
-                // Contoh: https://lightnovelworld.org/novel/shadow-slave/ → shadow-slave
-                val slug = bookUrl.trimEnd('/')
-                    .substringAfterLast('/')
+                // Slug dari URL: .../novel/shadow-slave/ → shadow-slave
+                val slug = bookUrl.trimEnd('/').substringAfterLast('/')
                     .ifBlank {
                         bookUrl.trimEnd('/').substringBeforeLast('/').substringAfterLast('/')
                     }
 
-                // Cari total chapter dari halaman novel
-                // Contoh: "A total of 3007 chapters" atau "3007 Chapters"
-                val totalChapters = extractChapterCount(doc)
-                    ?: throw Exception("Cannot find chapter count for $bookUrl")
+                val total = extractChapterCount(doc)
+                    ?: throw Exception("Chapter count not found for $bookUrl")
 
-                // Generate semua chapter URL secara langsung
-                // Format: https://lightnovelworld.org/novel/{slug}/chapter/{n}/
-                (1..totalChapters).map { n ->
+                (1..total).map { n ->
                     ChapterResult(
                         title = "Chapter $n",
                         url = "${baseUrl}novel/$slug/chapter/$n/"
@@ -115,56 +105,92 @@ class LightNovelWorld(
         }
 
     private fun extractChapterCount(doc: Document): Int? {
-        // Coba berbagai selector untuk menemukan jumlah chapter
-        val selectors = listOf(
-            ".novel-stats span",
-            ".header-stats span",
-            ".stats span",
-            ".novel-info span",
-            "span[title*='chapter' i]",
-            "span[title*='Chapter' i]",
-            ".chapter-count",
-            "#chapter-count"
-        )
-
-        for (selector in selectors) {
-            for (el in doc.select(selector)) {
-                val text = el.text()
-                val num = extractNumberFromText(text)
-                if (num != null && num > 0) return num
-            }
+        // Cari di elemen stats/chapters
+        for (el in doc.select("span, div, p, li")) {
+            val text = el.ownText().trim()
+            val match = Regex("""(\d[\d,]+)\s*chapters?""", RegexOption.IGNORE_CASE).find(text)
+            val num = match?.groupValues?.get(1)?.replace(",", "")?.toIntOrNull()
+            if (num != null && num in 1..50000) return num
         }
 
-        // Fallback: cari teks yang mengandung "chapters" di seluruh halaman
+        // Fallback: scan seluruh body
         val bodyText = doc.body()?.text() ?: return null
         val patterns = listOf(
-            Regex("""(\d+)\s*chapters?\s*(?:have been|translated|available)""", RegexOption.IGNORE_CASE),
-            Regex("""total\s+of\s+(\d+)\s*chapters?""", RegexOption.IGNORE_CASE),
-            Regex("""(\d+)\s*chapters?""", RegexOption.IGNORE_CASE)
+            Regex("""(\d[\d,]+)\s*chapters?""", RegexOption.IGNORE_CASE),
+            Regex("""total\s+of\s+(\d[\d,]+)""", RegexOption.IGNORE_CASE)
         )
         for (pattern in patterns) {
-            val match = pattern.find(bodyText)
-            val num = match?.groupValues?.get(1)?.toIntOrNull()
-            if (num != null && num > 0) return num
+            val num = pattern.find(bodyText)?.groupValues?.get(1)
+                ?.replace(",", "")?.toIntOrNull()
+            if (num != null && num in 1..50000) return num
         }
-
         return null
     }
 
-    private fun extractNumberFromText(text: String): Int? {
-        return Regex("""(\d+)""").find(text)?.groupValues?.get(1)?.toIntOrNull()
+    // Parse berdasarkan struktur HTML nyata dari lightnovelworld.org
+    // Struktur: div.recommendation-card > h3.card-title + a.card-cover-link > img
+    private fun parseBooksFromDocument(doc: Document): List<BookResult> {
+        val results = mutableListOf<BookResult>()
+        val seen = mutableSetOf<String>()
+
+        for (card in doc.select("div.recommendation-card")) {
+            // Judul: ada di h3.card-title di dalam .card-content
+            val title = card.selectFirst("h3.card-title")?.text()?.trim()
+            if (title.isNullOrBlank()) continue
+
+            // URL novel: dari a.card-cover-link atau a.btn.btn-primary
+            val href = card.selectFirst("a.card-cover-link")?.attr("href")
+                ?: card.selectFirst("a.btn-primary")?.attr("href")
+                ?: continue
+            if (href.isBlank()) continue
+            val url = resolveUrl(baseUrl, href)
+            if (!seen.add(url)) continue
+
+            // Cover: img di dalam .card-cover
+            val img = card.selectFirst(".card-cover img")
+            val cover = img?.attr("src")?.ifBlank { img.attr("data-src") }
+                ?: img?.attr("data-src") ?: ""
+
+            results.add(BookResult(
+                title = title,
+                url = url,
+                coverImageUrl = resolveUrl(baseUrl, cover)
+            ))
+        }
+
+        return results
+    }
+
+    // Deteksi halaman terakhir dari pagination baru lightnovelworld
+    // Struktur: a.pagination-btn dengan href yang punya page=N
+    private fun isLastPage(doc: Document, currentPage: Int): Boolean {
+        // Cari total halaman dari teks pagination "1-24 of 15288"
+        val infoText = doc.selectFirst(".pagination-info span")?.text() ?: ""
+        val totalMatch = Regex("""of\s+([\d,]+)""").find(infoText)
+        val total = totalMatch?.groupValues?.get(1)?.replace(",", "")?.toIntOrNull()
+        if (total != null) {
+            val totalPages = (total + 23) / 24 // 24 novel per halaman
+            return currentPage >= totalPages
+        }
+
+        // Fallback: cek apakah ada tombol next (a.pagination-btn dengan SVG panah)
+        val paginationBtns = doc.select(".pagination a.pagination-btn")
+        return paginationBtns.none { btn ->
+            val href = btn.attr("href")
+            href.contains("page=${currentPage + 1}")
+        }
     }
 
     override suspend fun getCatalogList(index: Int): Response<PagedList<BookResult>> =
-    withContext(Dispatchers.Default) {
-        tryConnect {
-            val page = index + 1
-            val url = "${catalogUrl}?page=$page"
-            val doc = fetchDoc(url) ?: return@tryConnect PagedList.createEmpty(index = index)
-            val books = parseBooksFromDocument(doc)
-            PagedList(list = books, index = index, isLastPage = isLastPage(doc))
+        withContext(Dispatchers.Default) {
+            tryConnect {
+                val page = index + 1
+                val url = "${catalogUrl}?sort=updates&order=desc&page=$page"
+                val doc = fetchDoc(url) ?: return@tryConnect PagedList.createEmpty(index = index)
+                val books = parseBooksFromDocument(doc)
+                PagedList(list = books, index = index, isLastPage = isLastPage(doc, page))
+            }
         }
-    }
 
     override suspend fun getCatalogSearch(
         index: Int,
@@ -177,88 +203,22 @@ class LightNovelWorld(
 
                 val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
                 val page = index + 1
-
-                // lightnovelworld.org pakai parameter "keywords"
                 val url = "${baseUrl}advanced-search/?keywords=$encoded&page=$page"
                 val doc = fetchDoc(url) ?: return@tryConnect PagedList.createEmpty(index = index)
                 val books = parseBooksFromDocument(doc)
-
                 PagedList(
                     list = books,
                     index = index,
-                    isLastPage = books.isEmpty() || isLastPage(doc)
+                    isLastPage = books.isEmpty() || isLastPage(doc, page)
                 )
             }
         }
 
-    private fun parseBooksFromDocument(doc: Document): List<BookResult> {
-    val seen = mutableSetOf<String>()
-    val results = mutableListOf<BookResult>()
-
-    // Selector utama berdasarkan struktur halaman advanced-search
-    val items = doc.select(".novel-item, .book-item, .novel-card, li[class*='novel']")
-
-    for (item in items) {
-        val anchor = item.selectFirst("a[href*='/novel/']") ?: continue
-        val href = anchor.attr("href").trim()
-        if (href.isBlank()) continue  // ← perbaikan: tidak pakai ifBlank { continue }
-        val url = resolveUrl(baseUrl, href)
-        if (!seen.add(url)) continue
-
-        val title = (item.selectFirst("[class*='title'], h3, h4")?.text()
-            ?: anchor.attr("title").ifBlank { anchor.text() }).trim()
-        if (title.isBlank()) continue
-
-        val img = item.selectFirst("img")
-        val cover = img?.attr("data-src")?.ifBlank { img.attr("src") }
-            ?: img?.attr("src") ?: ""
-
-        results.add(BookResult(
-            title = title,
-            url = url,
-            coverImageUrl = resolveUrl(baseUrl, cover)
-        ))
-    }
-
-    // Fallback jika selector utama kosong
-    if (results.isEmpty()) {
-        for (anchor in doc.select("a[href*='/novel/']")) {
-            val href = anchor.attr("href").trim()
-            if (href.contains("/chapter/") || href.endsWith("/chapters/")) continue
-            val url = resolveUrl(baseUrl, href)
-            if (!seen.add(url)) continue
-            val title = anchor.attr("title").ifBlank { anchor.text() }.trim()
-            if (title.isBlank()) continue
-            val img = anchor.selectFirst("img") ?: anchor.parent()?.selectFirst("img")
-            val cover = img?.attr("data-src")?.ifBlank { img.attr("src") } ?: ""
-            results.add(BookResult(title = title, url = url, coverImageUrl = resolveUrl(baseUrl, cover)))
-        }
-    }
-
-    return results
-}
-
-    private fun getBooksList(doc: Document, index: Int): PagedList<BookResult> {
-        val books = parseBooksFromDocument(doc)
-        return PagedList(
-            list = books,
-            index = index,
-            isLastPage = isLastPage(doc)
-        )
-    }
-
-    private fun isLastPage(doc: Document): Boolean {
-        val pagination = doc.selectFirst("ul.pagination, .pagination") ?: return true
-        return pagination.selectFirst("li.next:not(.disabled), a[rel=next]") == null
-    }
-
     private fun resolveUrl(base: String, raw: String): String {
-        val value = raw.trim()
-        if (value.isBlank()) return value
-        if (value.startsWith("http://") || value.startsWith("https://")) return value
-        if (value.startsWith("//")) return "https:$value"
-        val normalizedBase = base.trimEnd('/')
-        val normalizedValue = value.removePrefix("/")
-        return "$normalizedBase/$normalizedValue"
+        val v = raw.trim()
+        if (v.isBlank()) return v
+        if (v.startsWith("http://") || v.startsWith("https://")) return v
+        if (v.startsWith("//")) return "https:$v"
+        return "${base.trimEnd('/')}/${v.removePrefix("/")}"
     }
 }
