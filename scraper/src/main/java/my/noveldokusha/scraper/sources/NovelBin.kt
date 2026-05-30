@@ -6,16 +6,20 @@ import my.noveldokusha.core.LanguageCode
 import my.noveldokusha.core.PagedList
 import my.noveldokusha.core.Response
 import my.noveldokusha.network.NetworkClient
+import my.noveldokusha.network.add
+import my.noveldokusha.network.addPath
+import my.noveldokusha.network.getRequest
+import my.noveldokusha.network.ifCase
 import my.noveldokusha.network.toDocument
+import my.noveldokusha.network.toUrlBuilderSafe
 import my.noveldokusha.network.tryConnect
 import my.noveldokusha.scraper.R
 import my.noveldokusha.scraper.SourceInterface
 import my.noveldokusha.scraper.TextExtractor
 import my.noveldokusha.scraper.domain.BookResult
 import my.noveldokusha.scraper.domain.ChapterResult
+import okhttp3.Headers
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
-import java.net.URLEncoder
 
 class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catalog {
     override val id = "Novelbin"
@@ -25,145 +29,73 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     override val iconUrl = "https://novelbin.me/img/logo.png"
     override val language = LanguageCode.ENGLISH
 
-    private fun pickFirstNotBlank(vararg values: String?): String =
-        values.firstOrNull { !it.isNullOrBlank() }.orEmpty()
-
-    private fun resolveUrl(href: String): String =
-        if (href.startsWith("http")) href else baseUrl + href.removePrefix("/")
-
-    private fun bestFromSrcset(srcset: String?): String? =
-        srcset
-            ?.split(",")
-            ?.mapNotNull { part ->
-                part.trim().split(" ").firstOrNull()?.takeIf { it.isNotBlank() }
+    // Helper: ambil src atau data-src (lazy-loaded images)
+    private fun imageUrl(element: org.jsoup.nodes.Element?): String {
+        if (element == null) return ""
+        return element.attr("data-src").ifBlank {
+            element.attr("src").ifBlank {
+                element.attr("data-original")
             }
-            ?.lastOrNull()
-
-    private fun bestImageUrl(img: Element?): String =
-        resolveUrl(
-            pickFirstNotBlank(
-                bestFromSrcset(img?.attr("data-srcset")),
-                bestFromSrcset(img?.attr("srcset")),
-                img?.attr("data-src"),
-                img?.attr("data-original"),
-                img?.attr("src"),
-            )
-        )
-
-    private fun buildPageUrl(baseUrl: String, page: Int): String =
-        if (page <= 1) {
-            baseUrl
-        } else if (baseUrl.contains('?')) {
-            "$baseUrl&page=$page"
-        } else {
-            "$baseUrl?page=$page"
         }
-
-    private fun chapterPageCandidates(bookUrl: String, page: Int): List<String> {
-        if (page <= 1) return listOf(bookUrl)
-
-        val trimmed = bookUrl.trimEnd('/')
-        return listOf(
-            buildPageUrl(bookUrl, page),
-            "$trimmed/page/$page/",
-        ).distinct()
     }
 
-    private fun parseChapterList(doc: Document): List<ChapterResult> =
-        doc.select(
-            ".chapter-list a[href], .list-chapter a[href], ul.list-chapter li a[href], #chapter-list a[href], a[href*='/chapter-']"
-        )
-            .mapNotNull { a ->
-                val href = a.attr("href").trim()
-                val title = pickFirstNotBlank(a.attr("title"), a.text()).trim()
-
-                if (href.isBlank() || title.isBlank()) return@mapNotNull null
-                if (title.equals("READ NOW", ignoreCase = true)) return@mapNotNull null
-                if (!href.contains("/chapter-", ignoreCase = true) && !href.contains("/chapter/", ignoreCase = true)) {
-                    return@mapNotNull null
-                }
-
-                ChapterResult(
-                    title = title,
-                    url = resolveUrl(href),
-                )
-            }
-            .distinctBy { it.url }
-
-    private suspend fun getPagesList(index: Int, url: String): Response<PagedList<BookResult>> =
+    private suspend fun getPagesList(index: Int, url: String) =
         withContext(Dispatchers.Default) {
             tryConnect {
-                val doc = networkClient.get(url).toDocument()
+                networkClient.get(url).toDocument().run {
+                    val isLastPage = select("ul.pagination li.next.disabled").isEmpty()
+                    val bookResults =
+                        select("#list-page .list-novel .row, #list-page .list-novel .novel-item").mapNotNull {
+                            // Coba beberapa selector untuk link judul
+                            val link = it.selectFirst("div.col-xs-7 a")
+                                ?: it.selectFirst(".novel-title a")
+                                ?: it.selectFirst("h3 a")
+                                ?: return@mapNotNull null
 
-                val bookResults =
-                    doc.select("#list-page .list-novel .row, .list-novel .row")
-                        .mapNotNull { row ->
-                            val link = row.selectFirst("div.col-xs-7 a[href], a[href]") ?: return@mapNotNull null
-                            val img = row.selectFirst("div.col-xs-3 img, img")
-
-                            val title = pickFirstNotBlank(link.attr("title"), link.text()).trim()
-                            val href = link.attr("href").trim()
-                            if (title.isBlank() || href.isBlank()) return@mapNotNull null
+                            // Coba beberapa selector untuk cover image
+                            val coverImg = it.selectFirst("div.col-xs-3 > div > img")
+                                ?: it.selectFirst("div.col-xs-3 img")
+                                ?: it.selectFirst(".novel-cover img")
+                                ?: it.selectFirst("img")
 
                             BookResult(
-                                title = title,
-                                url = resolveUrl(href),
-                                coverImageUrl = img?.let { bestImageUrl(it) }.orEmpty(),
+                                title = link.attr("title").ifBlank { link.text() },
+                                url = link.attr("href"),
+                                coverImageUrl = imageUrl(coverImg)
                             )
                         }
-
-                val isLastPage = doc.select("ul.pagination li.next.disabled").isNotEmpty()
-
-                PagedList(
-                    list = bookResults,
-                    index = index,
-                    isLastPage = isLastPage,
-                )
+                    PagedList(list = bookResults, index = index, isLastPage = !isLastPage)
+                }
             }
         }
 
     override suspend fun getChapterTitle(doc: Document): String =
         withContext(Dispatchers.Default) {
-            pickFirstNotBlank(
-                doc.selectFirst("h2 > .title-chapter")?.text(),
-                doc.selectFirst("h1.entry-title")?.text(),
-                doc.title(),
-            )
+            doc.selectFirst("h2 > .title-chapter")?.text()
+                ?: doc.selectFirst(".chr-title")?.text()
+                ?: doc.selectFirst("h2")?.text()
+                ?: ""
         }
 
     override suspend fun getChapterText(doc: Document): String =
         withContext(Dispatchers.Default) {
-            val content =
-                listOf(
-                    ".reading-content",
-                    ".chapter-content",
-                    "#chapter-content",
-                    "#chr-content",
-                    ".entry-content",
-                    ".text-left",
-                    "article",
-                ).mapNotNull { selector -> doc.selectFirst(selector) }
-                    .firstOrNull()
-                    ?: return@withContext ""
-
-            content.select(
-                "h1, h2, .chapter-nav, .nav-links, .ads, .adsads, script, style, noscript, iframe"
-            ).remove()
-
-            TextExtractor.get(content)
+            // Coba beberapa selector dari yang paling spesifik ke umum
+            val content = doc.selectFirst(".container .adsads")
+                ?: doc.selectFirst("#chapter-c")
+                ?: doc.selectFirst(".chr-c")
+                ?: doc.selectFirst(".reading-content")
+                ?: doc.selectFirst("div[id^=chapter]")
+                ?: doc.selectFirst(".chapter-content")
+            content?.let { TextExtractor.get(it) } ?: ""
         }
 
     override suspend fun getBookCoverImageUrl(bookUrl: String): Response<String?> =
         withContext(Dispatchers.Default) {
             tryConnect {
                 val doc = networkClient.get(bookUrl).toDocument()
-                val img = doc.selectFirst(".book-img img, .book-info img, .summary_image img, .tab-summary .summary_image img")
-
-                pickFirstNotBlank(
-                    doc.selectFirst("meta[property=og:image]")?.attr("content"),
-                    doc.selectFirst("meta[itemprop=image]")?.attr("content"),
-                    img?.let { bestImageUrl(it) },
-                )
+                doc.selectFirst("meta[itemprop=image]")?.attr("content")
+                    ?: doc.selectFirst(".book img")?.let { imageUrl(it) }
+                    ?: doc.selectFirst(".novel-cover img")?.let { imageUrl(it) }
             }
         }
 
@@ -171,49 +103,66 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
         withContext(Dispatchers.Default) {
             tryConnect {
                 networkClient.get(bookUrl).toDocument()
-                    .selectFirst("div.desc-text, .desc-text, .summary__content")
-                    ?.let { TextExtractor.get(it) }
+                    .selectFirst("div.desc-text, .summary__content, .description-summary")
+                    ?.text()
             }
         }
 
     override suspend fun getChapterList(bookUrl: String) =
         withContext(Dispatchers.Default) {
             tryConnect {
-                val chapters = mutableListOf<ChapterResult>()
-                val seenUrls = linkedSetOf<String>()
+                val doc = networkClient.get(bookUrl).toDocument()
 
-                var page = 1
-                while (page <= 1000) {
-                    var pageAddedAny = false
+                // Ambil novel ID dari og:url, fallback ke URL langsung
+                val keyId = doc.selectFirst("meta[property=og:url]")
+                    ?.attr("content")
+                    ?.toUrlBuilderSafe()
+                    ?.build()
+                    ?.lastPathSegment
+                    ?: bookUrl.toUrlBuilderSafe().build().lastPathSegment
+                    ?: throw Exception("Cannot extract novel ID from $bookUrl")
 
-                    for (candidateUrl in chapterPageCandidates(bookUrl, page)) {
-                        val doc = runCatching {
-                            networkClient.get(candidateUrl).toDocument()
-                        }.getOrNull() ?: continue
+                val ajaxUrl = baseUrl
+                    .toUrlBuilderSafe()
+                    .addPath("ajax", "chapter-archive")
+                    .add("novelId" to keyId)
+                    .toString()
 
-                        val pageChapters = parseChapterList(doc)
-                        val newChapters = pageChapters.filter { it.url !in seenUrls }
-                        if (newChapters.isNotEmpty()) {
-                            chapters += newChapters
-                            seenUrls.addAll(newChapters.map { it.url })
-                            pageAddedAny = true
-                            break
-                        }
-                    }
+                val response = getRequest(
+                    url = ajaxUrl,
+                    headers = Headers.Builder()
+                        .add("Accept", "*/*")
+                        .add("X-Requested-With", "XMLHttpRequest")
+                        .add(
+                            "User-Agent",
+                            "Mozilla/5.0 (Android 13; Mobile; rv:125.0) Gecko/125.0 Firefox/125.0"
+                        )
+                        .add("Referer", "$bookUrl#tab-chapters-title")
+                        .build()
+                ).let { networkClient.call(it) }.toDocument()
 
-                    if (!pageAddedAny) break
-                    page++
+                // FIX: Novelbin (sejak Mei 2026) kadang membungkus chapter dalam <template>
+                // Jsoup mengakses isi <template> sebagai node biasa
+                val chapters = response.select("ul.list-chapter li a")
+                    .takeIf { it.isNotEmpty() }
+                    ?: response.select("li a") // fallback untuk <template> content
+
+                chapters.map {
+                    ChapterResult(
+                        title = it.attr("title").ifBlank { it.text() },
+                        url = it.attr("href")
+                    )
                 }
-
-                chapters
             }
         }
 
     override suspend fun getCatalogList(index: Int): Response<PagedList<BookResult>> =
         withContext(Dispatchers.Default) {
             val page = index + 1
-            val url = buildPageUrl(catalogUrl, page)
-
+            val url = catalogUrl
+                .toUrlBuilderSafe()
+                .ifCase(page > 1) { add("page", page.toString()) }
+                .toString()
             getPagesList(index, url)
         }
 
@@ -223,11 +172,12 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     ): Response<PagedList<BookResult>> =
         withContext(Dispatchers.Default) {
             val page = index + 1
-            val encodedInput = URLEncoder.encode(input, Charsets.UTF_8.name())
-            val baseSearchUrl = "${baseUrl}search?keyword=$encodedInput"
-            val url = buildPageUrl(baseSearchUrl, page)
-
+            val url = baseUrl
+                .toUrlBuilderSafe()
+                .addPath("search")
+                .add("keyword" to input)
+                .ifCase(page > 1) { add("page", page.toString()) }
+                .toString()
             getPagesList(index, url)
         }
 }
-
