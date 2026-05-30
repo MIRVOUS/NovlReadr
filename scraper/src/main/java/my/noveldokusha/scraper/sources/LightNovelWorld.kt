@@ -25,7 +25,7 @@ class LightNovelWorld(
     override val id = "light_novel_world"
     override val nameStrId = R.string.source_name_light_novel_world
     override val baseUrl = "https://lightnovelworld.org/"
-    override val catalogUrl = "https://lightnovelworld.org/genre-all/?order=updates"
+    override val catalogUrl = "https://lightnovelworld.org/advanced-search/"
     override val iconUrl = "https://lightnovelworld.org/static/lightnovelworld/favicon.ico"
     override val language = LanguageCode.ENGLISH
 
@@ -156,14 +156,15 @@ class LightNovelWorld(
     }
 
     override suspend fun getCatalogList(index: Int): Response<PagedList<BookResult>> =
-        withContext(Dispatchers.Default) {
-            tryConnect {
-                val page = index + 1
-                val url = "${catalogUrl}?page=$page"
-                val doc = fetchDoc(url) ?: return@tryConnect PagedList.createEmpty(index = index)
-                getBooksList(doc, index)
-            }
+    withContext(Dispatchers.Default) {
+        tryConnect {
+            val page = index + 1
+            val url = "${catalogUrl}?page=$page"
+            val doc = fetchDoc(url) ?: return@tryConnect PagedList.createEmpty(index = index)
+            val books = parseBooksFromDocument(doc)
+            PagedList(list = books, index = index, isLastPage = isLastPage(doc))
         }
+    }
 
     override suspend fun getCatalogSearch(
         index: Int,
@@ -190,25 +191,54 @@ class LightNovelWorld(
             }
         }
 
-    private fun parseBooksFromDocument(doc: Document): List<BookResult> =
-        doc.select(".novel-item").mapNotNull { el ->
-            val anchor = el.selectFirst("a[href*='/novel/']") ?: return@mapNotNull null
-            val href = anchor.attr("href").trim().ifBlank { return@mapNotNull null }
-            val title = anchor.attr("title").ifBlank {
-                el.selectFirst(".novel-title, h3, h4")?.text()
-            }?.ifBlank { return@mapNotNull null } ?: return@mapNotNull null
+    private fun parseBooksFromDocument(doc: Document): List<BookResult> {
+    val seen = mutableSetOf<String>()
+    val results = mutableListOf<BookResult>()
 
-            val img = el.selectFirst("img")
-            val cover = img?.attr("data-src")?.ifBlank { img.attr("src") }
-                ?: img?.attr("src")
-                ?: ""
+    // Selector utama berdasarkan struktur halaman advanced-search
+    val items = doc.select(".novel-item, .book-item, .novel-card, li[class*='novel']")
 
-            BookResult(
-                title = title,
-                url = resolveUrl(baseUrl, href),
-                coverImageUrl = resolveUrl(baseUrl, cover)
-            )
+    for (item in items) {
+        val anchor = item.selectFirst("a[href*='/novel/']") ?: continue
+        val href = anchor.attr("href").trim().ifBlank { continue }
+        val url = resolveUrl(baseUrl, href)
+        if (!seen.add(url)) continue
+
+        // Judul: dari title attribute, atau teks di bawah gambar
+        val title = item.selectFirst("[class*='title'], h3, h4")?.text()
+            ?: anchor.attr("title")
+            ?: anchor.text()
+        if (title.isBlank()) continue
+
+        // Cover: prioritas data-src (lazy load) lalu src
+        val img = item.selectFirst("img")
+        val cover = img?.attr("data-src")?.ifBlank { img.attr("src") }
+            ?: img?.attr("src") ?: ""
+
+        results.add(BookResult(
+            title = title.trim(),
+            url = url,
+            coverImageUrl = resolveUrl(baseUrl, cover)
+        ))
+    }
+
+    // Fallback: cari semua link /novel/ jika selector utama kosong
+    if (results.isEmpty()) {
+        for (anchor in doc.select("a[href*='/novel/']")) {
+            val href = anchor.attr("href").trim()
+            if (href.contains("/chapter/") || href.endsWith("/chapters/")) continue
+            val url = resolveUrl(baseUrl, href)
+            if (!seen.add(url)) continue
+            val title = anchor.attr("title").ifBlank { anchor.text() }.trim()
+            if (title.isBlank()) continue
+            val img = anchor.selectFirst("img") ?: anchor.parent()?.selectFirst("img")
+            val cover = img?.attr("data-src")?.ifBlank { img.attr("src") } ?: ""
+            results.add(BookResult(title = title, url = url, coverImageUrl = resolveUrl(baseUrl, cover)))
         }
+    }
+
+    return results
+    }
 
     private fun getBooksList(doc: Document, index: Int): PagedList<BookResult> {
         val books = parseBooksFromDocument(doc)
