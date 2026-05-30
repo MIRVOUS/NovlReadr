@@ -200,27 +200,43 @@ class LightNovelWorld(
 
     for (item in items) {
         val anchor = item.selectFirst("a[href*='/novel/']") ?: continue
-        val href = anchor.attr("href").trim().ifBlank { continue }
+        val href = anchor.attr("href").trim()
+        if (href.isBlank()) continue  // ← perbaikan: tidak pakai ifBlank { continue }
         val url = resolveUrl(baseUrl, href)
         if (!seen.add(url)) continue
 
-        // Judul: dari title attribute, atau teks di bawah gambar
-        val title = item.selectFirst("[class*='title'], h3, h4")?.text()
-            ?: anchor.attr("title")
-            ?: anchor.text()
+        val title = (item.selectFirst("[class*='title'], h3, h4")?.text()
+            ?: anchor.attr("title").ifBlank { anchor.text() }).trim()
         if (title.isBlank()) continue
 
-        // Cover: prioritas data-src (lazy load) lalu src
         val img = item.selectFirst("img")
         val cover = img?.attr("data-src")?.ifBlank { img.attr("src") }
             ?: img?.attr("src") ?: ""
 
         results.add(BookResult(
-            title = title.trim(),
+            title = title,
             url = url,
             coverImageUrl = resolveUrl(baseUrl, cover)
         ))
     }
+
+    // Fallback jika selector utama kosong
+    if (results.isEmpty()) {
+        for (anchor in doc.select("a[href*='/novel/']")) {
+            val href = anchor.attr("href").trim()
+            if (href.contains("/chapter/") || href.endsWith("/chapters/")) continue
+            val url = resolveUrl(baseUrl, href)
+            if (!seen.add(url)) continue
+            val title = anchor.attr("title").ifBlank { anchor.text() }.trim()
+            if (title.isBlank()) continue
+            val img = anchor.selectFirst("img") ?: anchor.parent()?.selectFirst("img")
+            val cover = img?.attr("data-src")?.ifBlank { img.attr("src") } ?: ""
+            results.add(BookResult(title = title, url = url, coverImageUrl = resolveUrl(baseUrl, cover)))
+        }
+    }
+
+    return results
+}
 
     // Fallback: cari semua link /novel/ jika selector utama kosong
     if (results.isEmpty()) {
