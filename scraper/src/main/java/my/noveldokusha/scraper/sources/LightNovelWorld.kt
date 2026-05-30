@@ -51,15 +51,26 @@ class LightNovelWorld(
         }
 
     override suspend fun getChapterText(doc: Document): String =
-        withContext(Dispatchers.Default) {
-            val content = doc.selectFirst("#chapter-container")
-                ?: doc.selectFirst(".chapter-container")
-                ?: doc.selectFirst(".chapter-content")
-                ?: doc.selectFirst("#content")
-                ?: doc.selectFirst("div[id^=chapter]")
-                ?: doc.selectFirst("article")
-            content?.let { TextExtractor.get(it) } ?: ""
-        }
+    withContext(Dispatchers.Default) {
+        // Selector spesifik: hanya ambil div#chapterText / .chapter-text
+        val content = doc.selectFirst("#chapterText")
+            ?: doc.selectFirst(".chapter-text")
+            ?: doc.selectFirst(".chapter-content")
+            ?: return@withContext ""
+
+        // Hapus semua elemen yang bukan isi novel sebelum extract
+        content.select(
+            "div.chapter-ad-container, " +    // iklan
+            "div.chapter-loading, " +          // "Loading chapters..."
+            "div.chapter-selector, " +         // dropdown chapter
+            "div.chapter-nav, " +              // navigasi atas
+            "div.bottom-nav, " +               // navigasi bawah
+            "script, style, " +                // script dan CSS inline
+            ".chapter-promo"                   // promosi
+        ).remove()
+
+        TextExtractor.get(content)
+    }
 
     override suspend fun getBookCoverImageUrl(bookUrl: String): Response<String?> =
         withContext(Dispatchers.Default) {
@@ -203,7 +214,7 @@ class LightNovelWorld(
 
                 val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
                 val page = index + 1
-                val url = "${baseUrl}advanced-search/?keywords=$encoded&page=$page"
+                val url = "${baseUrl}search/?q=$encoded&page=$page"
                 val doc = fetchDoc(url) ?: return@tryConnect PagedList.createEmpty(index = index)
                 val books = parseBooksFromDocument(doc)
                 PagedList(
