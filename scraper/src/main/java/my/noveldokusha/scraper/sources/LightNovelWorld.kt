@@ -206,52 +206,53 @@ class LightNovelWorld(
     override suspend fun getCatalogSearch(
     index: Int,
     input: String
-    ): Response<PagedList<BookResult>> =
+): Response<PagedList<BookResult>> =
     withContext(Dispatchers.Default) {
         tryConnect {
             val query = input.trim()
             if (query.isEmpty()) return@tryConnect PagedList.createEmpty(index = index)
 
             val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
-            val apiUrl = "${baseUrl}api/search/?q=$encoded&search_type=title"
 
-            val response = getRequest(
-                url = apiUrl,
-                headers = Headers.Builder()
-                    .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36")
-                    .add("Accept", "*/*")
-                    .add("Referer", "${baseUrl}search/?q=$encoded&search_type=title")
-                    .add("Sec-Fetch-Dest", "empty")
-                    .add("Sec-Fetch-Mode", "cors")
-                    .add("Sec-Fetch-Site", "same-origin")
-                    .build()
-            ).let { networkClient.call(it) }
+            // Pakai URL persis seperti QuickNovel — tanpa search_type
+            val apiUrl = "${baseUrl}api/search/?q=$encoded"
 
-            val body = response.body?.string() ?: return@tryConnect PagedList.createEmpty(index = index)
+            // Pakai fetchDoc tapi ambil raw string, bukan Document
+            val rawBody = runCatching {
+                getRequest(
+                    url = apiUrl,
+                    headers = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36")
+                        .add("Accept", "application/json, */*")
+                        .add("Referer", "${baseUrl}search/")
+                        .add("Sec-Fetch-Dest", "empty")
+                        .add("Sec-Fetch-Mode", "cors")
+                        .add("Sec-Fetch-Site", "same-origin")
+                        .build()
+                ).let { networkClient.call(it) }.body?.string()
+            }.getOrNull() ?: return@tryConnect PagedList.createEmpty(index = index)
 
-            // Parse JSON manual (tanpa library Gson/Moshi)
+            // Parse JSON pakai org.json (built-in Android, tidak perlu import)
             val novels = mutableListOf<BookResult>()
-            val novelPattern = Regex(""""slug"\s*:\s*"([^"]+)".*?"title"\s*:\s*"([^"]+)".*?"cover_path"\s*:\s*"([^"]*?)"""", RegexOption.DOT_MATCHES_ALL)
-            val titlePattern = Regex(""""title"\s*:\s*"([^"]+)"""")
-            val slugPattern = Regex(""""slug"\s*:\s*"([^"]+)"""")
-            val coverPattern = Regex(""""cover_path"\s*:\s*"([^"]*?)"""")
+            runCatching {
+                val root = org.json.JSONObject(rawBody)
+                val novelsArray = root.optJSONArray("novels")
+                    ?: return@tryConnect PagedList.createEmpty(index = index)
 
-            // Split per novel object
-            val novelObjects = body.split(""","id":""").drop(1)
-            for (obj in novelObjects) {
-                val slug = slugPattern.find(obj)?.groupValues?.get(1) ?: continue
-                val title = titlePattern.find(obj)?.groupValues?.get(1) ?: continue
-                val coverPath = coverPattern.find(obj)?.groupValues?.get(1) ?: ""
-                val url = "${baseUrl}novel/$slug/"
-                val coverUrl = resolveUrl(baseUrl, coverPath)
-                novels.add(BookResult(title = title, url = url, coverImageUrl = coverUrl))
+                for (i in 0 until novelsArray.length()) {
+                    val obj = novelsArray.getJSONObject(i)
+                    val title = obj.optString("title").trim().ifBlank { continue }
+                    val slug = obj.optString("slug").trim().ifBlank { continue }
+                    val coverPath = obj.optString("cover_path", "")
+                    novels.add(BookResult(
+                        title = title,
+                        url = "${baseUrl}novel/$slug/",
+                        coverImageUrl = resolveUrl(baseUrl, coverPath)
+                    ))
+                }
             }
 
-            PagedList(
-                list = novels,
-                index = index,
-                isLastPage = true // API ini tidak ada pagination
-            )
+            PagedList(list = novels, index = index, isLastPage = true)
         }
     }
 
