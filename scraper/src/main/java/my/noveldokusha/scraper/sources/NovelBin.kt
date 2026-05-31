@@ -71,12 +71,28 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     }
 
     override suspend fun getChapterTitle(doc: Document): String =
-        withContext(Dispatchers.Default) {
-            doc.selectFirst("h2 > .title-chapter")?.text()
-                ?: doc.selectFirst(".chr-title")?.text()
-                ?: doc.selectFirst("h2")?.text()
-                ?: ""
-        }
+    withContext(Dispatchers.Default) {
+        // Coba selector spesifik dulu
+        val rawTitle = doc.selectFirst("h2 > .title-chapter")?.text()
+            ?: doc.selectFirst(".chr-title")?.text()
+            ?: doc.selectFirst(".chapter-title")?.text()
+            ?: doc.selectFirst("meta[property='og:title']")?.attr("content")
+            ?: doc.selectFirst("h1")?.text()
+            ?: doc.selectFirst("h2")?.text()
+            ?: return@withContext ""
+
+        // Bersihkan judul SEO panjang
+        // Contoh: "Shadow Hack #Chapter 1: Mysterious Shadow - Read ... Online - All Page"
+        // Jadi: "Chapter 1: Mysterious Shadow"
+        val cleaned = rawTitle
+            .replace(Regex("""^.*?#"""), "")           // hapus prefix "Shadow Hack #"
+            .replace(Regex("""\s*-\s*Read\s+.*$""", RegexOption.IGNORE_CASE), "") // hapus " - Read ... All Page"
+            .replace(Regex("""\s*-\s*All\s+Page.*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*Online\s*$""", RegexOption.IGNORE_CASE), "")
+            .trim()
+
+        cleaned.ifBlank { rawTitle.trim() }
+    }
 
     override suspend fun getChapterText(doc: Document): String =
         withContext(Dispatchers.Default) {
