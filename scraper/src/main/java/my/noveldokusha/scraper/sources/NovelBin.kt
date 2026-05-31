@@ -74,16 +74,11 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     withContext(Dispatchers.Default) {
         // Coba selector spesifik dulu
         val rawTitle = doc.selectFirst("h2 > .title-chapter")?.text()
-            ?: doc.selectFirst(".chr-title")?.text()
+            ?: doc.selectFirst(".nchr-text")?.text()
             ?: doc.selectFirst(".chapter-title")?.text()
-            ?: doc.selectFirst("meta[property='og:title']")?.attr("content")
-            ?: doc.selectFirst("h1")?.text()
-            ?: doc.selectFirst("h2")?.text()
             ?: return@withContext ""
 
-        // Bersihkan judul SEO panjang
-        // Contoh: "Shadow Hack #Chapter 1: Mysterious Shadow - Read ... Online - All Page"
-        // Jadi: "Chapter 1: Mysterious Shadow"
+        // Bersihkan judul chapter panjang
         val cleaned = rawTitle
             .replace(Regex("""^.*?#"""), "")           // hapus prefix "Shadow Hack #"
             .replace(Regex("""\s*-\s*Read\s+.*$""", RegexOption.IGNORE_CASE), "") // hapus " - Read ... All Page"
