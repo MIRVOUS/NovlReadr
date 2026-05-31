@@ -73,7 +73,7 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     override suspend fun getChapterTitle(doc: Document): String =
     withContext(Dispatchers.Default) {
         // Coba selector spesifik dulu
-        val rawTitle = doc.selectFirst("h2 > .title-chapter")?.text()
+        val rawTitle = doc.selectFirst(".title-chapter")?.text()
             ?: doc.selectFirst(".nchr-text")?.text()
             ?: doc.selectFirst(".chapter-title")?.text()
             ?: return@withContext ""
@@ -160,16 +160,16 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
                     ?: response.select("li a") // fallback untuk <template> content
 
                 chapters.map {
-    val rawTitle = it.attr("title").ifBlank { it.text() }
-    val cleanTitle = rawTitle
-        .replace(Regex("""^.*?#"""), "")
-        .replace(Regex("""\s*-\s*Read\s+.*$""", RegexOption.IGNORE_CASE), "")
-        .replace(Regex("""\s*-\s*All\s+Page.*$""", RegexOption.IGNORE_CASE), "")
-        .trim()
-    ChapterResult(
-        title = cleanTitle.ifBlank { rawTitle.trim() },
-        url = it.attr("href")
-    )
+                    val rawTitle = it.attr("title").ifBlank { it.text() }
+                    val cleanTitle = rawTitle
+                        .replace(Regex("""^.*?#"""), "")
+                        .replace(Regex("""\s*-\s*Read\s+.*$""", RegexOption.IGNORE_CASE), "")
+                        .replace(Regex("""\s*-\s*All\s+Page.*$""", RegexOption.IGNORE_CASE), "")
+                        .trim()
+                    ChapterResult(
+                        title = cleanTitle.ifBlank { rawTitle.trim() },
+                        url = it.attr("href")
+                    )
                 }
             }
         }
