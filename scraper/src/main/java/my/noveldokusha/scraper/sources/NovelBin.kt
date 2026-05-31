@@ -165,10 +165,16 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
                     ?: response.select("li a") // fallback untuk <template> content
 
                 chapters.map {
-                    ChapterResult(
-                        title = it.attr("title").ifBlank { it.text() },
-                        url = it.attr("href")
-                    )
+    val rawTitle = it.attr("title").ifBlank { it.text() }
+    val cleanTitle = rawTitle
+        .replace(Regex("""^.*?#"""), "")
+        .replace(Regex("""\s*-\s*Read\s+.*$""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s*-\s*All\s+Page.*$""", RegexOption.IGNORE_CASE), "")
+        .trim()
+    ChapterResult(
+        title = cleanTitle.ifBlank { rawTitle.trim() },
+        url = it.attr("href")
+    )
                 }
             }
         }
