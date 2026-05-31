@@ -240,15 +240,17 @@ class LightNovelWorld(
                     ?: return@tryConnect PagedList.createEmpty(index = index)
 
                 for (i in 0 until novelsArray.length()) {
-                    val obj = novelsArray.getJSONObject(i)
-                    val title = obj.optString("title").trim().ifBlank { continue }
-                    val slug = obj.optString("slug").trim().ifBlank { continue }
-                    val coverPath = obj.optString("cover_path", "")
-                    novels.add(BookResult(
-                        title = title,
-                        url = "${baseUrl}novel/$slug/",
-                        coverImageUrl = resolveUrl(baseUrl, coverPath)
-                    ))
+    val obj = novelsArray.getJSONObject(i)
+    val title = obj.optString("title").trim()
+    if (title.isBlank()) continue
+    val slug = obj.optString("slug").trim()
+    if (slug.isBlank()) continue
+    val coverPath = obj.optString("cover_path", "")
+    novels.add(BookResult(
+        title = title,
+        url = "${baseUrl}novel/$slug/",
+        coverImageUrl = resolveUrl(baseUrl, coverPath)
+    ))
                 }
             }
 
