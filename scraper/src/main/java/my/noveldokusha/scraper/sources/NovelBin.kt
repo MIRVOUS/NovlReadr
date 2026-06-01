@@ -72,21 +72,8 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
 
     override suspend fun getChapterTitle(doc: Document): String =
     withContext(Dispatchers.Default) {
-        // Coba selector spesifik dulu
-        val rawTitle = doc.selectFirst(".title-chapter")?.text()
-            ?: doc.selectFirst(".nchr-text")?.text()
-            ?: doc.selectFirst(".chapter-title")?.text()
-            ?: return@withContext ""
-
-        // Bersihkan judul chapter panjang
-        val cleaned = rawTitle
-            .replace(Regex("""^.*?#"""), "")           // hapus prefix "Shadow Hack #"
-            .replace(Regex("""\s*-\s*Read\s+.*$""", RegexOption.IGNORE_CASE), "") // hapus " - Read ... All Page"
-            .replace(Regex("""\s*-\s*All\s+Page.*$""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\s*Online\s*$""", RegexOption.IGNORE_CASE), "")
-            .trim()
-
-        cleaned.ifBlank { rawTitle.trim() }
+        // Kembalikan kosong agar tidak menimpa judul bersih dari getChapterList
+        ""
     }
 
     override suspend fun getChapterText(doc: Document): String =
