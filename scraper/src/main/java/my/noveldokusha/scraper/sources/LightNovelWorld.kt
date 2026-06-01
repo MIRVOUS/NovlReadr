@@ -196,7 +196,7 @@ class LightNovelWorld(
         withContext(Dispatchers.Default) {
             tryConnect {
                 val page = index + 1
-                val url = "${catalogUrl}?sort=updates&order=desc&page=$page"
+                val url = "${catalogUrl}?sort=view&order=desc&page=$page"
                 val doc = fetchDoc(url) ?: return@tryConnect PagedList.createEmpty(index = index)
                 val books = parseBooksFromDocument(doc)
                 PagedList(list = books, index = index, isLastPage = isLastPage(doc, page))
