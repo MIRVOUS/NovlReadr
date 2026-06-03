@@ -76,6 +76,16 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
         doc.selectFirst("span.chr-text")?.text()?.trim()
             ?: doc.selectFirst("a.chr-title")?.attr("title")?.trim()
             ?: ""
+        val rawTitle = it.attr("title").ifBlank { it.text() }
+        val cleanTitle = rawTitle
+            .replace(Regex("""^.*?#"""), "")
+            .replace(Regex("""\s*-\s*Read\s+.*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*-\s*All\s+Page.*$""", RegexOption.IGNORE_CASE), "")
+            .trim()
+            ChapterResult(
+            title = cleanTitle.ifBlank { rawTitle.trim() },
+            url = it.attr("href")
+            )
     }
 
     override suspend fun getChapterText(doc: Document): String =
