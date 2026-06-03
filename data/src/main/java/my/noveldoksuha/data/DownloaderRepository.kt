@@ -141,9 +141,15 @@ class DownloaderRepository @Inject constructor(
 private fun heuristicChapterExtraction(url: String, document: Document): my.noveldokusha.scraper.ChapterDownload? {
     Readability4JExtended(url, document).parse().also { article ->
         val content = article.articleContent ?: return null
+        // Bersihkan judul seperti di NovelBin.kt
+        val cleanedTitle = article.title
+            ?.replace(Regex("""^.*?#"""), "")
+            ?.replace(Regex("""\s*-\s*Read\s+.*$""", RegexOption.IGNORE_CASE), "")
+            ?.replace(Regex("""\s*-\s*All\s+Page.*$""", RegexOption.IGNORE_CASE), "")
+            ?.trim() ?: ""
         return my.noveldokusha.scraper.ChapterDownload(
             body = TextExtractor.get(content),
-            title = article.title
+            title = cleanedTitle
         )
     }
 }
