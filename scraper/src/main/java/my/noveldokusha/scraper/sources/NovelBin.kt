@@ -81,12 +81,7 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
     override suspend fun getChapterText(doc: Document): String =
         withContext(Dispatchers.Default) {
             // Coba beberapa selector dari yang paling spesifik ke umum
-            val content = doc.selectFirst(".container .adsads")
-                ?: doc.selectFirst("#chapter-c")
-                ?: doc.selectFirst(".chr-c")
-                ?: doc.selectFirst(".reading-content")
-                ?: doc.selectFirst("div[id^=chapter]")
-                ?: doc.selectFirst(".chapter-content")
+            val content = doc.selectFirst("div[id^=chr-content]")
             content?.let { TextExtractor.get(it) } ?: ""
         }
 
