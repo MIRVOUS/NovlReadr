@@ -19,7 +19,6 @@ import my.noveldokusha.scraper.sources.RoyalRoad
 import my.noveldokusha.scraper.sources.Saikai
 import my.noveldokusha.scraper.sources.SakuraNovel
 import my.noveldokusha.scraper.sources.Sousetsuka
-import my.noveldokusha.scraper.sources.WbNovel
 import my.noveldokusha.scraper.sources.WuxiaWorld
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -52,7 +51,6 @@ class Scraper @Inject constructor(
         SakuraNovel(networkClient),
         MeioNovel(networkClient),
         MoreNovel(networkClient),
-        WbNovel(networkClient),
         NovelBin(networkClient),
     )
 
