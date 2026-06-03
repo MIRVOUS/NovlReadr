@@ -72,8 +72,10 @@ class NovelBin(private val networkClient: NetworkClient) : SourceInterface.Catal
 
     override suspend fun getChapterTitle(doc: Document): String =
     withContext(Dispatchers.Default) {
-        // Kembalikan kosong agar tidak menimpa judul bersih dari getChapterList
-        ""
+        // Ambil judul bersih langsung dari span.chr-text
+        doc.selectFirst("span.chr-text")?.text()?.trim()
+            ?: doc.selectFirst("a.chr-title")?.attr("title")?.trim()
+            ?: ""
     }
 
     override suspend fun getChapterText(doc: Document): String =
