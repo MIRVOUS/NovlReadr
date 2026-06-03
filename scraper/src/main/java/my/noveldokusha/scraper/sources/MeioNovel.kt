@@ -81,13 +81,19 @@ class MeioNovel(private val networkClient: NetworkClient) : SourceInterface.Cata
         }
 
     override suspend fun getChapterTitle(doc: Document): String =
-        withContext(Dispatchers.Default) {
-            pickFirstNotBlank(
-                doc.selectFirst("h1.entry-title")?.text(),
-                doc.selectFirst(".reading-content h1")?.text(),
-                doc.title(),
-            )
-        }
+    withContext(Dispatchers.Default) {
+        // Prioritaskan h3 di reading-content (judul bab yang benar)
+        val title = doc.selectFirst(".reading-content h3")?.text()?.trim()
+            ?: doc.selectFirst("h1.entry-title")?.text()?.trim()
+            ?: doc.selectFirst(".reading-content h1")?.text()?.trim()
+            ?: doc.title()
+        
+        // Bersihkan dari sisa-sisa teks panjang (opsional)
+        title
+            .replace(Regex("""\s*[-–]\s*Baca Light Novel.*$""", RegexOption.IGNORE_CASE), "")
+           // .replace(Regex("""\s*[-–]\s*HTL\s*""", RegexOption.IGNORE_CASE), "")
+            .trim()
+    }
 
     override suspend fun getChapterText(doc: Document): String =
         withContext(Dispatchers.Default) {
