@@ -28,8 +28,9 @@ class ChapterBodyRepository @Inject constructor(
 
     private suspend fun insertWithTitle(chapterBody: ChapterBody, title: String?) = appDatabase.transaction {
         insertReplace(chapterBody)
-        if (title != null)
-            bookChaptersRepository.updateTitle(chapterBody.url, title)
+        // fix title after reading current chapter
+        // if (title != null)
+          //  bookChaptersRepository.updateTitle(chapterBody.url, title)
     }
 
     suspend fun fetchBody(urlChapter: String, tryCache: Boolean = true): Response<String> {
