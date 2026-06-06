@@ -9,8 +9,8 @@ android {
 }
 
 dependencies {
-    implementation(projects.strings)
 implementation 'org.json:json:20230227'
+    implementation(projects.strings)
     implementation(projects.core)
     implementation(projects.networking)
 
