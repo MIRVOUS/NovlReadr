@@ -20,7 +20,7 @@ import my.noveldokusha.scraper.domain.ChapterResult
 import org.jsoup.nodes.Document
 
 class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalog {
-    override val id = "vanovel"
+    override val id = "va_webnovel"
     override val nameStrId = R.string.source_name_vanovel // Anda perlu mendefinisikan string ini
     override val baseUrl = "https://vanovel.com/"
     override val catalogUrl = "https://vanovel.com/all-novels/"
