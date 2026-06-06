@@ -22,7 +22,7 @@ import org.jsoup.nodes.Document
 
 class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalog {
     override val id = "vanovel"
-    override val nameStrId = R.string.source_name_vanovel // Anda perlu mendefinisikan string ini
+    override val nameStrId = R.string.source_name_vanovel
     override val baseUrl = "https://vanovel.com/"
     override val catalogUrl = "https://vanovel.com/all-novels/"
     override val iconUrl = "https://vanovel.com/wp-content/uploads/2025/10/vanovel.png"
@@ -56,12 +56,14 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
         }
 
     override suspend fun getChapterTitle(doc: Document): String =
-        withContext(Dispatchers.Default) { doc.selectFirst("h3.chapter-name")?.text()?.trim() ?: "" }
+        withContext(Dispatchers.Default) {
+            doc.selectFirst("h3.chapter-name")?.text()?.trim() ?: ""
+        }
 
     override suspend fun getChapterText(doc: Document): String =
         withContext(Dispatchers.Default) {
             doc.selectFirst(".reading-content .text-left")?.let {
-                it.select("div.code-block, .note-warning").remove() // Hapus iklan dan notifikasi
+                it.select("div.code-block, .note-warning").remove()
                 TextExtractor.get(it)
             } ?: ""
         }
@@ -87,10 +89,21 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
 
     override suspend fun getChapterList(bookUrl: String) =
         withContext(Dispatchers.Default) {
-            val postData = my.noveldokusha.network.postRequest(url = "${bookUrl}ajax/chapters/")
             tryConnect {
-                networkClient.call(postData).toDocument()
-                    .select("li.wp-manga-chapter")
+                // 1. Ambil ID novel dari halaman
+                val doc = networkClient.get(bookUrl).toDocument()
+                val mangaId = doc.selectFirst("#manga-chapters-holder")?.attr("data-id")
+                    ?: doc.selectFirst(".profile-manga")?.attr("data-id")
+                    ?: return@tryConnect emptyList()
+
+                // 2. Panggil endpoint AJAX untuk mendapatkan semua chapter
+                val ajaxUrl = "$baseUrl/wp-admin/admin-ajax.php"
+                val postData = postRequest(
+                    url = ajaxUrl,
+                    data = mapOf("action" to "manga_get_chapters", "manga" to mangaId)
+                )
+                val chaptersDoc = networkClient.call(postData).toDocument()
+                chaptersDoc.select("li.wp-manga-chapter")
                     .map { item ->
                         item.selectFirst("span")?.remove()
                         ChapterResult(
@@ -105,7 +118,7 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
         withContext(Dispatchers.Default) {
             val page = index + 1
             val url = catalogUrl.toUrlBuilderSafe()
-                .ifCase(page > 1) { add("page", page.toString()) }
+                .ifCase(page > 1) { addPath("page", page.toString()) }  // path-based pagination
                 .add("m_orderby" to "modified")
                 .toString()
             getPagesList(index, url)
@@ -118,7 +131,7 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
         withContext(Dispatchers.Default) {
             val page = index + 1
             val url = baseUrl.toUrlBuilderSafe()
-                .ifCase(page > 1) { addPath("page", page.toString()) }
+                .ifCase(page > 1) { add("page", page.toString()) }  // query parameter pagination
                 .add("s" to input, "post_type" to "wp-manga")
                 .toString()
             getPagesList(index, url)
