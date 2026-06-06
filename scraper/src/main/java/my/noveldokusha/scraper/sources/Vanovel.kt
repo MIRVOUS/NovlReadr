@@ -9,6 +9,7 @@ import my.noveldokusha.network.NetworkClient
 import my.noveldokusha.network.add
 import my.noveldokusha.network.addPath
 import my.noveldokusha.network.ifCase
+import my.noveldokusha.network.postRequest
 import my.noveldokusha.network.toDocument
 import my.noveldokusha.network.toUrlBuilderSafe
 import my.noveldokusha.network.tryConnect
@@ -20,6 +21,7 @@ import my.noveldokusha.scraper.domain.ChapterResult
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.Request
+import org.json.JSONArray
 import org.jsoup.nodes.Document
 
 class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalog {
@@ -96,12 +98,28 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
     override suspend fun getChapterList(bookUrl: String) =
         withContext(Dispatchers.Default) {
             tryConnect {
+                // Metode 1: Coba endpoint umum /ajax/chapters/ (seperti MeioNovel)
+                val ajaxUrl = bookUrl.trimEnd('/') + "/ajax/chapters/"
+                val postData = postRequest(url = ajaxUrl)
+                val response = networkClient.call(postData)
+                val chaptersDoc = response.toDocument()
+                val chapters = chaptersDoc.select("li.wp-manga-chapter")
+                    .map { item ->
+                        item.selectFirst("span")?.remove()
+                        ChapterResult(
+                            title = item.text().trim(),
+                            url = item.selectFirst("a")?.attr("href") ?: "",
+                        )
+                    }.reversed()
+                if (chapters.isNotEmpty()) return@tryConnect chapters
+
+                // Metode 2: Gunakan admin-ajax.php dengan POST dan parsing JSON
                 val doc = networkClient.get(bookUrl).toDocument()
                 val mangaId = doc.selectFirst("#manga-chapters-holder")?.attr("data-id")
                     ?: doc.selectFirst(".profile-manga")?.attr("data-id")
                     ?: return@tryConnect emptyList()
 
-                val ajaxUrl = "$baseUrl/wp-admin/admin-ajax.php"
+                val ajaxUrl2 = "$baseUrl/wp-admin/admin-ajax.php"
                 val formBody = FormBody.Builder()
                     .add("action", "manga_get_chapters")
                     .add("manga", mangaId)
@@ -110,22 +128,29 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
                     .add("X-Requested-With", "XMLHttpRequest")
                     .add("Referer", bookUrl)
                     .build()
-                // Buat Request.Builder dan kirim langsung
                 val requestBuilder = Request.Builder()
-                    .url(ajaxUrl)
+                    .url(ajaxUrl2)
                     .post(formBody)
                     .headers(headers)
-                val response = networkClient.call(requestBuilder)
-                val chaptersDoc = response.toDocument()
+                val response2 = networkClient.call(requestBuilder)
+                val responseBody = response2.body?.string() ?: ""
 
-                chaptersDoc.select("li.wp-manga-chapter")
-                    .map { item ->
-                        item.selectFirst("span")?.remove()
-                        ChapterResult(
-                            title = item.text().trim(),
-                            url = item.selectFirst("a")?.attr("href") ?: "",
-                        )
+                // Coba parsing JSON jika response berupa array
+                if (responseBody.startsWith("[")) {
+                    val jsonArray = JSONArray(responseBody)
+                    (0 until jsonArray.length()).mapNotNull { i ->
+                        val obj = jsonArray.getJSONObject(i)
+                        val title = obj.optString("title", "")
+                            .ifEmpty { obj.optString("chapter_name", "") }
+                        val url = obj.optString("url", "")
+                            .ifEmpty { obj.optString("href", "") }
+                        if (title.isNotBlank() && url.isNotBlank()) {
+                            ChapterResult(title, url)
+                        } else null
                     }.reversed()
+                } else {
+                    emptyList()
+                }
             }
         }
 
