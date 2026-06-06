@@ -10,7 +10,7 @@ import my.noveldokusha.scraper.sources.LightNovelWorld
 import my.noveldokusha.scraper.sources.LightNovelsTranslations
 import my.noveldokusha.scraper.sources.LocalSource
 import my.noveldokusha.scraper.sources.MeioNovel
-import my.noveldokusha.scraper.sources.MoreNovel
+import my.noveldokusha.scraper.sources.Vanovel
 import my.noveldokusha.scraper.sources.NovelBin
 import my.noveldokusha.scraper.sources.NovelHall
 import my.noveldokusha.scraper.sources.ReadNovelFull
@@ -50,7 +50,7 @@ class Scraper @Inject constructor(
         BacaLightnovel(networkClient),
         SakuraNovel(networkClient),
         MeioNovel(networkClient),
-        MoreNovel(networkClient),
+        Vanovel(networkClient),
         NovelBin(networkClient),
     )
 
