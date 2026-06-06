@@ -17,6 +17,9 @@ import my.noveldokusha.scraper.SourceInterface
 import my.noveldokusha.scraper.TextExtractor
 import my.noveldokusha.scraper.domain.BookResult
 import my.noveldokusha.scraper.domain.ChapterResult
+import okhttp3.FormBody
+import okhttp3.Headers
+import okhttp3.Request
 import org.jsoup.nodes.Document
 
 class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalog {
@@ -39,11 +42,14 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
                         val linkElement = item.selectFirst(".item-thumb a")
                         val url = linkElement?.attr("href")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                         val img = item.selectFirst(".item-thumb img")
+                        // PRIORITAS src DULU, lalu data-src
+                        val coverUrl = img?.attr("src")?.takeIf { it.isNotBlank() }
+                            ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
+                            ?: ""
                         BookResult(
                             title = item.selectFirst(".post-title h3 a")?.text()?.trim() ?: "",
                             url = url,
-                            coverImageUrl = img?.attr("data-src")?.takeIf { it.isNotBlank() }
-                                ?: img?.attr("src") ?: "",
+                            coverImageUrl = coverUrl,
                         )
                     }
                 PagedList(
@@ -62,7 +68,8 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
     override suspend fun getChapterText(doc: Document): String =
         withContext(Dispatchers.Default) {
             doc.selectFirst(".reading-content .text-left")?.let {
-                it.select("div.code-block, .note-warning").remove()
+                // Hapus elemen iklan dan notifikasi
+                it.select("div.code-block, .note-warning, .code-block-2, .code-block-3, .code-block-11").remove()
                 TextExtractor.get(it)
             } ?: ""
         }
@@ -70,9 +77,10 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
     override suspend fun getBookCoverImageUrl(bookUrl: String): Response<String?> =
         withContext(Dispatchers.Default) {
             tryConnect {
-                networkClient.get(bookUrl).toDocument()
-                    .selectFirst(".summary_image img")
-                    ?.attr("data-src")?.takeIf { it.isNotBlank() }
+                val doc = networkClient.get(bookUrl).toDocument()
+                val img = doc.selectFirst(".summary_image img")
+                img?.attr("src")?.takeIf { it.isNotBlank() }
+                    ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
                     ?: ""
             }
         }
@@ -80,24 +88,40 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
     override suspend fun getBookDescription(bookUrl: String): Response<String?> =
         withContext(Dispatchers.Default) {
             tryConnect {
-                networkClient.get(bookUrl).toDocument()
-                    .selectFirst(".summary__content")
-                    ?.let { TextExtractor.get(it) }
+                val doc = networkClient.get(bookUrl).toDocument()
+                val desc = doc.selectFirst(".summary__content")
+                desc?.select("div.code-block")?.remove() // Hapus iklan
+                desc?.let { TextExtractor.get(it) }
             }
         }
 
     override suspend fun getChapterList(bookUrl: String) =
         withContext(Dispatchers.Default) {
             tryConnect {
-                // Ambil ID novel dari halaman
+                // 1. Ambil ID novel
                 val doc = networkClient.get(bookUrl).toDocument()
                 val mangaId = doc.selectFirst("#manga-chapters-holder")?.attr("data-id")
                     ?: doc.selectFirst(".profile-manga")?.attr("data-id")
                     ?: return@tryConnect emptyList()
 
-                // Gunakan GET request ke admin-ajax.php dengan parameter query
-                val ajaxUrl = "$baseUrl/wp-admin/admin-ajax.php?action=manga_get_chapters&manga=$mangaId"
-                val chaptersDoc = networkClient.get(ajaxUrl).toDocument()
+                // 2. Gunakan POST request dengan header AJAX
+                val ajaxUrl = "$baseUrl/wp-admin/admin-ajax.php"
+                val formBody = FormBody.Builder()
+                    .add("action", "manga_get_chapters")
+                    .add("manga", mangaId)
+                    .build()
+                val headers = Headers.Builder()
+                    .add("X-Requested-With", "XMLHttpRequest")
+                    .add("Referer", bookUrl)
+                    .build()
+                val request = Request.Builder()
+                    .url(ajaxUrl)
+                    .post(formBody)
+                    .headers(headers)
+                    .build()
+                val response = networkClient.call(request)
+                val chaptersDoc = response.toDocument()
+
                 chaptersDoc.select("li.wp-manga-chapter")
                     .map { item ->
                         item.selectFirst("span")?.remove()
@@ -125,8 +149,9 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
     ): Response<PagedList<BookResult>> =
         withContext(Dispatchers.Default) {
             val page = index + 1
+            // Format URL pencarian: /page/2/?s=...&post_type=wp-manga
             val url = baseUrl.toUrlBuilderSafe()
-                .ifCase(page > 1) { add("page", page.toString()) }
+                .ifCase(page > 1) { addPath("page", page.toString()) }
                 .add("s" to input, "post_type" to "wp-manga")
                 .toString()
             getPagesList(index, url)
