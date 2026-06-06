@@ -18,10 +18,6 @@ import my.noveldokusha.scraper.SourceInterface
 import my.noveldokusha.scraper.TextExtractor
 import my.noveldokusha.scraper.domain.BookResult
 import my.noveldokusha.scraper.domain.ChapterResult
-import okhttp3.FormBody
-import okhttp3.Headers
-import okhttp3.Request
-import org.json.JSONArray
 import org.jsoup.nodes.Document
 
 class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalog {
@@ -98,12 +94,12 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
     override suspend fun getChapterList(bookUrl: String) =
         withContext(Dispatchers.Default) {
             tryConnect {
-                // Metode 1: Coba endpoint umum /ajax/chapters/ (seperti MeioNovel)
+                // Gunakan endpoint umum /ajax/chapters/ (mirip MeioNovel)
                 val ajaxUrl = bookUrl.trimEnd('/') + "/ajax/chapters/"
                 val postData = postRequest(url = ajaxUrl)
                 val response = networkClient.call(postData)
                 val chaptersDoc = response.toDocument()
-                val chapters = chaptersDoc.select("li.wp-manga-chapter")
+                chaptersDoc.select("li.wp-manga-chapter")
                     .map { item ->
                         item.selectFirst("span")?.remove()
                         ChapterResult(
@@ -111,46 +107,6 @@ class Vanovel(private val networkClient: NetworkClient) : SourceInterface.Catalo
                             url = item.selectFirst("a")?.attr("href") ?: "",
                         )
                     }.reversed()
-                if (chapters.isNotEmpty()) return@tryConnect chapters
-
-                // Metode 2: Gunakan admin-ajax.php dengan POST dan parsing JSON
-                val doc = networkClient.get(bookUrl).toDocument()
-                val mangaId = doc.selectFirst("#manga-chapters-holder")?.attr("data-id")
-                    ?: doc.selectFirst(".profile-manga")?.attr("data-id")
-                    ?: return@tryConnect emptyList()
-
-                val ajaxUrl2 = "$baseUrl/wp-admin/admin-ajax.php"
-                val formBody = FormBody.Builder()
-                    .add("action", "manga_get_chapters")
-                    .add("manga", mangaId)
-                    .build()
-                val headers = Headers.Builder()
-                    .add("X-Requested-With", "XMLHttpRequest")
-                    .add("Referer", bookUrl)
-                    .build()
-                val requestBuilder = Request.Builder()
-                    .url(ajaxUrl2)
-                    .post(formBody)
-                    .headers(headers)
-                val response2 = networkClient.call(requestBuilder)
-                val responseBody = response2.body?.string() ?: ""
-
-                // Coba parsing JSON jika response berupa array
-                if (responseBody.startsWith("[")) {
-                    val jsonArray = JSONArray(responseBody)
-                    (0 until jsonArray.length()).mapNotNull { i ->
-                        val obj = jsonArray.getJSONObject(i)
-                        val title = obj.optString("title", "")
-                            .ifEmpty { obj.optString("chapter_name", "") }
-                        val url = obj.optString("url", "")
-                            .ifEmpty { obj.optString("href", "") }
-                        if (title.isNotBlank() && url.isNotBlank()) {
-                            ChapterResult(title, url)
-                        } else null
-                    }.reversed()
-                } else {
-                    emptyList()
-                }
             }
         }
 
