@@ -17,6 +17,11 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: wrapper
+
       - name: Setup APK signing
         run: |
           echo -n ${{ secrets.SIGNING_KEY }} | base64 -d > app/novlreadr.jks
